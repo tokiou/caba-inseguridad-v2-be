@@ -1,0 +1,42 @@
+openapi: 3.0.3
+info:
+  title: CABA Inseguridad API
+  version: 0.1.0
+  description: API para consultar datos normalizados de inseguridad en CABA.
+
+servers:
+  - url: /api/v1
+    description: API base path
+
+tags:
+  - name: Health
+    description: Endpoints de estado de la API
+
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Health check
+      description: Verifica que la API esté levantada correctamente.
+      operationId: getHealth
+      responses:
+        "200":
+          description: API funcionando correctamente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              example:
+                status: ok
+
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          example: ok
