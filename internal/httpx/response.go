@@ -25,3 +25,11 @@ func WriteError(w http.ResponseWriter, status int, code string, message string) 
 		Message: message,
 	})
 }
+
+func WriteInvalidRequest(w http.ResponseWriter, message string) {
+	WriteError(w, http.StatusBadRequest, "invalid_request", message)
+}
+
+func WriteInternalError(w http.ResponseWriter, message string) {
+	WriteError(w, http.StatusInternalServerError, "internal_error", message)
+}
