@@ -107,3 +107,44 @@ Normalized schema includes `source_id` (unique key), `location` as GeoJSON Point
 - Frontend
 - Authentication
 - Aggregated statistics
+
+## Development workflow
+
+New features follow the layered spec → implement → test flow enforced by the subagents configured in `.claude/agents/`.
+
+### Starting a new feature
+
+Use `/agent-workflow <feature description>` to trigger the full automated pipeline:
+
+```
+spec-analyst → spec-architect → spec-developer → spec-validator → (loop if <95%) → spec-tester
+```
+
+The pipeline produces spec documents under `docs/sdd/wip/`, then implementation code, then tests. Quality gate is 95% — the loop repeats analyst→developer until the validator scores above threshold.
+
+For design questions or architecture trade-offs before coding, invoke the `senior-backend-architect` subagent directly.
+
+### Subagent reference
+
+| Agent | When to use |
+|---|---|
+| `spec-analyst` | Ambiguous requirements — turn a vague idea into a concrete spec |
+| `spec-architect` | System design, new domain/module, API contract decisions |
+| `spec-planner` | Break a spec into ordered tasks before implementation |
+| `spec-developer` | Implement a well-defined spec or task |
+| `spec-tester` | Generate test suites for completed code |
+| `spec-reviewer` | Code review pass on a PR or diff |
+| `spec-validator` | Quality scoring; call after implementation to get a 0–100 score |
+| `spec-orchestrator` | Multi-phase coordination when running agents manually |
+| `senior-backend-architect` | Production-grade Go patterns, performance, observability |
+| `refactor-agent` | Improve structure/readability without changing behaviour |
+
+### Layer rules (enforced by spec-architect + spec-developer)
+
+Every new domain must follow the existing layered structure — no shortcuts:
+
+```
+handler → service → repository interface → MongoRepository
+```
+
+New domains live under `internal/<domain>/` with the same file split: `model.go`, `dto.go`, `repository.go`, `mongo_repository.go`, `service.go`, `handler.go`, plus `*_test.go` files. Register routes in `internal/app/routes.go`.
