@@ -12,96 +12,84 @@ type fakeRepository struct {
 	receivedQuery NearbyCrimesQuery
 }
 
-func (r *fakeRepository) FindNearby(ctx context.Context, query NearbyCrimesQuery) ([]Crime, error) {
+func (r *fakeRepository) FindNearby(_ context.Context, query NearbyCrimesQuery) ([]Crime, error) {
 	r.receivedQuery = query
-
-	if r.err != nil {
-		return nil, r.err
-	}
-
-	return r.items, nil
+	return r.items, r.err
 }
 
-func TestServiceGetNearbyReturnsErrorForInvalidCoordinates(t *testing.T) {
-	repository := &fakeRepository{}
-	service := NewService(repository)
+func TestServiceGetNearby(t *testing.T) {
+	validQuery := NearbyCrimesQuery{Lat: -34.5895, Lng: -58.4201, RadiusMeters: 300}
 
-	query := NearbyCrimesQuery{
-		Lat:          0,
-		Lng:          0,
-		RadiusMeters: 300,
-	}
-
-	_, err := service.GetNearby(context.Background(), query)
-
-	if !errors.Is(err, ErrInvalidCoordinates) {
-		t.Fatalf("expected ErrInvalidCoordinates, got %v", err)
-	}
-}
-
-func TestServiceGetNearbyReturnsErrorForInvalidRadius(t *testing.T) {
-	repository := &fakeRepository{}
-	service := NewService(repository)
-
-	query := NearbyCrimesQuery{
-		Lat:          -34.5895,
-		Lng:          -58.4201,
-		RadiusMeters: 3000,
-	}
-
-	_, err := service.GetNearby(context.Background(), query)
-
-	if !errors.Is(err, ErrInvalidRadius) {
-		t.Fatalf("expected ErrInvalidRadius, got %v", err)
-	}
-}
-
-func TestServiceGetNearbyAppliesDefaultRadius(t *testing.T) {
-	repository := &fakeRepository{
-		items: []Crime{},
-	}
-	service := NewService(repository)
-
-	query := NearbyCrimesQuery{
-		Lat: -34.5895,
-		Lng: -58.4201,
-	}
-
-	response, err := service.GetNearby(context.Background(), query)
-	if err != nil {
-		t.Fatalf("expected nil error, got %v", err)
-	}
-
-	if response.RadiusMeters != DefaultRadiusMeters {
-		t.Fatalf("expected radius %d, got %d", DefaultRadiusMeters, response.RadiusMeters)
-	}
-
-	if repository.receivedQuery.RadiusMeters != DefaultRadiusMeters {
-		t.Fatalf("expected repository radius %d, got %d", DefaultRadiusMeters, repository.receivedQuery.RadiusMeters)
-	}
-}
-
-func TestServiceGetNearbyReturnsResponseWithCount(t *testing.T) {
-	repository := &fakeRepository{
-		items: []Crime{
-			{SourceID: "1", CrimeType: "ROBO", Quantity: 1},
-			{SourceID: "2", CrimeType: "HURTO", Quantity: 1},
+	tests := []struct {
+		name       string
+		repo       *fakeRepository
+		query      NearbyCrimesQuery
+		wantErr    error
+		wantCount  int
+		wantRadius int
+	}{
+		{
+			name:    "error for coordinates outside CABA",
+			repo:    &fakeRepository{},
+			query:   NearbyCrimesQuery{Lat: 0, Lng: 0, RadiusMeters: 300},
+			wantErr: ErrInvalidCoordinates,
+		},
+		{
+			name:    "error for radius above max",
+			repo:    &fakeRepository{},
+			query:   NearbyCrimesQuery{Lat: -34.5895, Lng: -58.4201, RadiusMeters: MaxRadiusMeters + 1},
+			wantErr: ErrInvalidRadius,
+		},
+		{
+			name:       "applies default radius when zero",
+			repo:       &fakeRepository{items: []Crime{}},
+			query:      NearbyCrimesQuery{Lat: -34.5895, Lng: -58.4201},
+			wantRadius: DefaultRadiusMeters,
+		},
+		{
+			name:  "count matches repository results",
+			repo:  &fakeRepository{items: []Crime{{SourceID: "1"}, {SourceID: "2"}}},
+			query: validQuery,
+			wantCount: 2,
+		},
+		{
+			name:  "propagates repository error",
+			repo:  &fakeRepository{err: errors.New("db unavailable")},
+			query: validQuery,
+			wantErr: errors.New("db unavailable"),
 		},
 	}
-	service := NewService(repository)
 
-	query := NearbyCrimesQuery{
-		Lat:          -34.5895,
-		Lng:          -58.4201,
-		RadiusMeters: 300,
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := NewService(tt.repo)
 
-	response, err := service.GetNearby(context.Background(), query)
-	if err != nil {
-		t.Fatalf("expected nil error, got %v", err)
-	}
+			resp, err := svc.GetNearby(context.Background(), tt.query)
 
-	if response.Count != 2 {
-		t.Fatalf("expected count 2, got %d", response.Count)
+			if tt.wantErr != nil {
+				if err == nil {
+					t.Fatalf("want error, got nil")
+				}
+				if tt.wantErr == ErrInvalidCoordinates || tt.wantErr == ErrInvalidRadius {
+					if !errors.Is(err, tt.wantErr) {
+						t.Fatalf("want error %v, got %v", tt.wantErr, err)
+					}
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tt.wantRadius != 0 && resp.RadiusMeters != tt.wantRadius {
+				t.Errorf("want radius %d, got %d", tt.wantRadius, resp.RadiusMeters)
+			}
+			if tt.wantRadius != 0 && tt.repo.receivedQuery.RadiusMeters != tt.wantRadius {
+				t.Errorf("want repository radius %d, got %d", tt.wantRadius, tt.repo.receivedQuery.RadiusMeters)
+			}
+			if tt.wantCount != 0 && resp.Count != tt.wantCount {
+				t.Errorf("want count %d, got %d", tt.wantCount, resp.Count)
+			}
+		})
 	}
 }

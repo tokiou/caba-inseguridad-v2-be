@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 
 	"github.com/tokiou/caba-inseguridad-routes-go/internal/config"
@@ -13,10 +14,10 @@ import (
 
 type App struct {
 	Router      http.Handler
-	MongoClient *mongo.Client
+	mongoClient *mongo.Client
 }
 
-func New(ctx context.Context, cfg config.Config) (*App, error) {
+func New(ctx context.Context, cfg config.Config, log *slog.Logger) (*App, error) {
 	mongoClient, err := mongoplatform.NewClient(ctx, cfg.MongoURI)
 	if err != nil {
 		return nil, err
@@ -26,16 +27,17 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		Database(cfg.MongoDatabase).
 		Collection(cfg.MongoCrimesCollection)
 
-	crimesRepository := crimes.NewMongoRepository(crimesCollection)
-	crimesService := crimes.NewService(crimesRepository)
-	crimesHandler := crimes.NewHandler(crimesService)
-
+	crimesRepo := crimes.NewMongoRepository(crimesCollection)
+	crimesService := crimes.NewService(crimesRepo)
+	crimesHandler := crimes.NewHandler(crimesService, log)
 	healthHandler := health.NewHandler()
 
-	router := NewRouter(healthHandler, crimesHandler)
-
 	return &App{
-		Router:      router,
-		MongoClient: mongoClient,
+		Router:      NewRouter(healthHandler, crimesHandler),
+		mongoClient: mongoClient,
 	}, nil
+}
+
+func (a *App) Close(ctx context.Context) error {
+	return a.mongoClient.Disconnect(ctx)
 }

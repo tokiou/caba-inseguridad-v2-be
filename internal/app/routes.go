@@ -5,11 +5,13 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
-	"github.com/tokiou/caba-inseguridad-routes-go/internal/crimes"
-	"github.com/tokiou/caba-inseguridad-routes-go/internal/health"
 )
 
-func NewRouter(healthHandler *health.Handler, crimesHandler *crimes.Handler) http.Handler {
+type Registrar interface {
+	Register(r chi.Router)
+}
+
+func NewRouter(registrars ...Registrar) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(cors.Handler(cors.Options{
@@ -26,8 +28,9 @@ func NewRouter(healthHandler *health.Handler, crimesHandler *crimes.Handler) htt
 	})
 
 	r.Route("/api/v1", func(r chi.Router) {
-		r.Get("/health", healthHandler.Check)
-		r.Get("/crimes/nearby", crimesHandler.GetNearby)
+		for _, reg := range registrars {
+			reg.Register(r)
+		}
 	})
 
 	return r

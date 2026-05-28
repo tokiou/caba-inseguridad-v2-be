@@ -1,34 +1,43 @@
 package crimes
 
 import (
+	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/tokiou/caba-inseguridad-routes-go/internal/httpx"
 )
 
-type Handler struct {
-	service *Service
+type service interface {
+	GetNearby(ctx context.Context, query NearbyCrimesQuery) (NearbyCrimesResponse, error)
 }
 
-func NewHandler(service *Service) *Handler {
-	return &Handler{
-		service: service,
-	}
+type Handler struct {
+	service service
+	log     *slog.Logger
+}
+
+func NewHandler(svc service, log *slog.Logger) *Handler {
+	return &Handler{service: svc, log: log}
+}
+
+func (h *Handler) Register(r chi.Router) {
+	r.Get("/crimes/nearby", h.GetNearby)
 }
 
 func (h *Handler) GetNearby(w http.ResponseWriter, r *http.Request) {
 	query, err := parseNearbyCrimesQuery(r)
 	if err != nil {
-		writeNearbyError(w, err)
+		h.writeError(w, err)
 		return
 	}
 
 	response, err := h.service.GetNearby(r.Context(), query)
 	if err != nil {
-		writeNearbyError(w, err)
+		h.writeError(w, err)
 		return
 	}
 
@@ -62,36 +71,20 @@ func parseNearbyCrimesQuery(r *http.Request) (NearbyCrimesQuery, error) {
 		if err != nil {
 			return NearbyCrimesQuery{}, ErrInvalidRadius
 		}
-
 		radius = parsedRadius
 	}
 
-	return NearbyCrimesQuery{
-		Lat:          lat,
-		Lng:          lng,
-		RadiusMeters: radius,
-	}, nil
+	return NearbyCrimesQuery{Lat: lat, Lng: lng, RadiusMeters: radius}, nil
 }
 
-func writeNearbyError(w http.ResponseWriter, err error) {
+func (h *Handler) writeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrInvalidCoordinates):
-		httpx.WriteInvalidRequest(
-			w,
-			"lat and lng are required and must be valid CABA coordinates",
-		)
-
+		httpx.WriteInvalidRequest(w, "lat and lng are required and must be valid CABA coordinates")
 	case errors.Is(err, ErrInvalidRadius):
-		httpx.WriteInvalidRequest(
-			w,
-			"radius must be between 1 and 2000 meters",
-		)
-
+		httpx.WriteInvalidRequest(w, "radius must be between 1 and 2000 meters")
 	default:
-		log.Printf("nearby crimes internal error: %v", err)
-		httpx.WriteInternalError(
-			w,
-			"could not fetch nearby crimes",
-		)
+		h.log.Error("nearby crimes internal error", "error", err)
+		httpx.WriteInternalError(w, "could not fetch nearby crimes")
 	}
 }

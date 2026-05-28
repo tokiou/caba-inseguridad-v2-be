@@ -1,94 +1,87 @@
 package crimes
 
 import (
+	"context"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
 
-func TestHandlerGetNearbyReturns400WhenLatIsMissing(t *testing.T) {
-	handler := NewHandler(NewService(&fakeRepository{}))
-
-	request := httptest.NewRequest(
-		http.MethodGet,
-		"/api/v1/crimes/nearby?lng=-58.4201&radius=300",
-		nil,
-	)
-	response := httptest.NewRecorder()
-
-	handler.GetNearby(response, request)
-
-	if response.Code != http.StatusBadRequest {
-		t.Fatalf("expected status 400, got %d", response.Code)
-	}
-
-	if !strings.Contains(response.Body.String(), "lat and lng are required") {
-		t.Fatalf("expected invalid coordinates message, got %s", response.Body.String())
-	}
+type fakeService struct {
+	resp NearbyCrimesResponse
+	err  error
 }
 
-func TestHandlerGetNearbyReturns400WhenLngIsMissing(t *testing.T) {
-	handler := NewHandler(NewService(&fakeRepository{}))
-
-	request := httptest.NewRequest(
-		http.MethodGet,
-		"/api/v1/crimes/nearby?lat=-34.5895&radius=300",
-		nil,
-	)
-	response := httptest.NewRecorder()
-
-	handler.GetNearby(response, request)
-
-	if response.Code != http.StatusBadRequest {
-		t.Fatalf("expected status 400, got %d", response.Code)
-	}
-
-	if !strings.Contains(response.Body.String(), "lat and lng are required") {
-		t.Fatalf("expected invalid coordinates message, got %s", response.Body.String())
-	}
+func (s *fakeService) GetNearby(_ context.Context, _ NearbyCrimesQuery) (NearbyCrimesResponse, error) {
+	return s.resp, s.err
 }
 
-func TestHandlerGetNearbyReturns400WhenRadiusIsNotANumber(t *testing.T) {
-	handler := NewHandler(NewService(&fakeRepository{}))
-
-	request := httptest.NewRequest(
-		http.MethodGet,
-		"/api/v1/crimes/nearby?lat=-34.5895&lng=-58.4201&radius=abc",
-		nil,
-	)
-	response := httptest.NewRecorder()
-
-	handler.GetNearby(response, request)
-
-	if response.Code != http.StatusBadRequest {
-		t.Fatalf("expected status 400, got %d", response.Code)
-	}
-
-	if !strings.Contains(response.Body.String(), "radius must be between 1 and 2000 meters") {
-		t.Fatalf("expected invalid radius message, got %s", response.Body.String())
-	}
+func discardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-func TestHandlerGetNearbyReturns200ForValidRequest(t *testing.T) {
-	handler := NewHandler(NewService(&fakeRepository{
-		items: []Crime{},
-	}))
-
-	request := httptest.NewRequest(
-		http.MethodGet,
-		"/api/v1/crimes/nearby?lat=-34.5895&lng=-58.4201&radius=300",
-		nil,
-	)
-	response := httptest.NewRecorder()
-
-	handler.GetNearby(response, request)
-
-	if response.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d. body: %s", response.Code, response.Body.String())
+func TestHandlerGetNearby(t *testing.T) {
+	tests := []struct {
+		name       string
+		url        string
+		svc        *fakeService
+		wantStatus int
+		wantBody   string
+	}{
+		{
+			name:       "400 when lat is missing",
+			url:        "/api/v1/crimes/nearby?lng=-58.4201&radius=300",
+			svc:        &fakeService{},
+			wantStatus: http.StatusBadRequest,
+			wantBody:   "lat and lng are required",
+		},
+		{
+			name:       "400 when lng is missing",
+			url:        "/api/v1/crimes/nearby?lat=-34.5895&radius=300",
+			svc:        &fakeService{},
+			wantStatus: http.StatusBadRequest,
+			wantBody:   "lat and lng are required",
+		},
+		{
+			name:       "400 when radius is not a number",
+			url:        "/api/v1/crimes/nearby?lat=-34.5895&lng=-58.4201&radius=abc",
+			svc:        &fakeService{},
+			wantStatus: http.StatusBadRequest,
+			wantBody:   "radius must be between 1 and 2000 meters",
+		},
+		{
+			name:       "200 for valid request",
+			url:        "/api/v1/crimes/nearby?lat=-34.5895&lng=-58.4201&radius=300",
+			svc:        &fakeService{resp: NearbyCrimesResponse{RadiusMeters: 300, Items: []Crime{}}},
+			wantStatus: http.StatusOK,
+			wantBody:   `"radius_meters":300`,
+		},
+		{
+			name:       "500 when service returns unexpected error",
+			url:        "/api/v1/crimes/nearby?lat=-34.5895&lng=-58.4201&radius=300",
+			svc:        &fakeService{err: io.ErrUnexpectedEOF},
+			wantStatus: http.StatusInternalServerError,
+			wantBody:   "could not fetch nearby crimes",
+		},
 	}
 
-	if !strings.Contains(response.Body.String(), `"radius_meters":300`) {
-		t.Fatalf("expected radius_meters 300, got %s", response.Body.String())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := NewHandler(tt.svc, discardLogger())
+			req := httptest.NewRequest(http.MethodGet, tt.url, nil)
+			rec := httptest.NewRecorder()
+
+			handler.GetNearby(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Errorf("want status %d, got %d — body: %s", tt.wantStatus, rec.Code, rec.Body.String())
+			}
+			if tt.wantBody != "" && !strings.Contains(rec.Body.String(), tt.wantBody) {
+				t.Errorf("want body to contain %q, got: %s", tt.wantBody, rec.Body.String())
+			}
+		})
 	}
 }

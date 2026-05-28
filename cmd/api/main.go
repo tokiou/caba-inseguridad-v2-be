@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/tokiou/caba-inseguridad-routes-go/internal/app"
@@ -12,30 +15,51 @@ import (
 )
 
 func main() {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
 	cfg := config.Load()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	startCtx, startCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer startCancel()
 
-	application, err := app.New(ctx, cfg)
+	application, err := app.New(startCtx, cfg, logger)
 	if err != nil {
-		log.Fatalf("could not initialize app: %v", err)
+		logger.Error("could not initialize app", "error", err)
+		os.Exit(1)
 	}
 
-	defer func() {
-		disconnectCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
+	srv := &http.Server{
+		Addr:         fmt.Sprintf(":%s", cfg.HTTPPort),
+		Handler:      application.Router,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
 
-		if err := application.MongoClient.Disconnect(disconnectCtx); err != nil {
-			log.Printf("could not disconnect MongoDB: %v", err)
+	go func() {
+		logger.Info("server listening", "addr", srv.Addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error("server error", "error", err)
+			os.Exit(1)
 		}
 	}()
 
-	addr := fmt.Sprintf(":%s", cfg.HTTPPort)
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
 
-	log.Printf("server listening on %s", addr)
+	logger.Info("shutting down...")
 
-	if err := http.ListenAndServe(addr, application.Router); err != nil {
-		log.Fatalf("server error: %v", err)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		logger.Error("http shutdown error", "error", err)
 	}
+
+	if err := application.Close(shutdownCtx); err != nil {
+		logger.Error("mongo disconnect error", "error", err)
+	}
+
+	logger.Info("server stopped")
 }
