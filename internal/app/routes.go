@@ -5,6 +5,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
+	httpSwagger "github.com/swaggo/http-swagger/v2"
 )
 
 type Registrar interface {
@@ -26,6 +27,10 @@ func NewRouter(registrars ...Registrar) http.Handler {
 	r.Get("/openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "openapi.yaml")
 	})
+
+	r.Get("/docs/*", httpSwagger.Handler(
+		httpSwagger.URL("/openapi.yaml"),
+	))
 
 	r.Route("/api/v1", func(r chi.Router) {
 		for _, reg := range registrars {

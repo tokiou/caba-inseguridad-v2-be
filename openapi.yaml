@@ -1,8 +1,10 @@
 openapi: 3.0.3
 info:
   title: CABA Inseguridad API
-  version: 0.1.0
-  description: API para consultar datos normalizados de inseguridad en CABA.
+  version: 0.2.0
+  description: |
+    Backend para **CABA Rutas Seguras**.
+    Dado dos puntos dentro de CABA, devuelve una ruta y expone datos de criminalidad cercanos.
 
 servers:
   - url: /api/v1
@@ -10,7 +12,11 @@ servers:
 
 tags:
   - name: Health
-    description: Endpoints de estado de la API
+    description: Estado de la API
+  - name: Crimes
+    description: Consulta de crímenes cercanos
+  - name: Routes
+    description: Cálculo de rutas dentro de CABA
 
 paths:
   /health:
@@ -30,6 +36,173 @@ paths:
               example:
                 status: ok
 
+  /crimes/nearby:
+    get:
+      tags:
+        - Crimes
+      summary: Crímenes cercanos a un punto
+      description: |
+        Devuelve todos los crímenes registrados dentro del radio especificado
+        alrededor de las coordenadas dadas. Ambas coordenadas deben estar dentro de CABA.
+      operationId: getNearbyCrimes
+      parameters:
+        - name: lat
+          in: query
+          required: true
+          description: Latitud del punto central (debe estar entre -35 y -34)
+          schema:
+            type: number
+            format: double
+            example: -34.6037
+        - name: lng
+          in: query
+          required: true
+          description: Longitud del punto central (debe estar entre -59 y -58)
+          schema:
+            type: number
+            format: double
+            example: -58.3816
+        - name: radius
+          in: query
+          required: false
+          description: Radio de búsqueda en metros (1–2000, default 300)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 2000
+            default: 300
+            example: 500
+      responses:
+        "200":
+          description: Lista de crímenes cercanos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NearbyCrimesResponse"
+        "400":
+          description: Parámetros inválidos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: invalid_request
+                message: lat and lng are required and must be valid CABA coordinates
+        "500":
+          description: Error interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /routes:
+    get:
+      tags:
+        - Routes
+      summary: Calcular ruta entre dos puntos dentro de CABA
+      description: |
+        Devuelve una ruta entre origen y destino, delegando el cálculo a OpenRouteService.
+        Ambos puntos deben estar dentro de CABA (lat ∈ [-35, -34], lng ∈ [-59, -58]).
+      operationId: getRoute
+      parameters:
+        - name: origin_lat
+          in: query
+          required: true
+          description: Latitud del punto de origen
+          schema:
+            type: number
+            format: double
+            example: -34.6037
+        - name: origin_lng
+          in: query
+          required: true
+          description: Longitud del punto de origen
+          schema:
+            type: number
+            format: double
+            example: -58.3816
+        - name: dest_lat
+          in: query
+          required: true
+          description: Latitud del punto de destino
+          schema:
+            type: number
+            format: double
+            example: -34.5895
+        - name: dest_lng
+          in: query
+          required: true
+          description: Longitud del punto de destino
+          schema:
+            type: number
+            format: double
+            example: -58.4201
+        - name: profile
+          in: query
+          required: false
+          description: Perfil de transporte
+          schema:
+            type: string
+            enum:
+              - driving-car
+              - foot-walking
+              - cycling-regular
+            default: driving-car
+            example: driving-car
+      responses:
+        "200":
+          description: Ruta calculada correctamente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RouteResponse"
+        "400":
+          description: Parámetros inválidos (coordenadas fuera de CABA, mismo punto, perfil inválido)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalid_coords:
+                  summary: Coordenadas fuera de CABA
+                  value:
+                    error: invalid_request
+                    message: origin and destination must be valid CABA coordinates
+                same_point:
+                  summary: Origen igual a destino
+                  value:
+                    error: invalid_request
+                    message: origin and destination must not be the same point
+                invalid_profile:
+                  summary: Perfil inválido
+                  value:
+                    error: invalid_request
+                    message: "profile must be one of: driving-car, foot-walking, cycling-regular"
+        "404":
+          description: No se encontró ruta entre los puntos dados
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: route_not_found
+                message: no route found between the given points
+        "502":
+          description: OpenRouteService no disponible
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: external_service_error
+                message: route service is temporarily unavailable
+        "500":
+          description: Error interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   schemas:
     HealthResponse:
@@ -40,3 +213,186 @@ components:
         status:
           type: string
           example: ok
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+        - message
+      properties:
+        error:
+          type: string
+          example: invalid_request
+        message:
+          type: string
+          example: descripción del error
+
+    GeoJSONPoint:
+      type: object
+      required:
+        - type
+        - coordinates
+      properties:
+        type:
+          type: string
+          enum:
+            - Point
+        coordinates:
+          type: array
+          items:
+            type: number
+            format: double
+          minItems: 2
+          maxItems: 2
+          description: "[longitude, latitude]"
+          example: [-58.3816, -34.6037]
+
+    GeoJSONLineString:
+      type: object
+      required:
+        - type
+        - coordinates
+      properties:
+        type:
+          type: string
+          enum:
+            - LineString
+        coordinates:
+          type: array
+          items:
+            type: array
+            items:
+              type: number
+              format: double
+            minItems: 2
+          description: "Array de puntos [longitude, latitude]"
+          example:
+            - [-58.3816, -34.6037]
+            - [-58.3820, -34.6010]
+            - [-58.4201, -34.5895]
+
+    Crime:
+      type: object
+      properties:
+        source_id:
+          type: string
+          example: "2023-00001"
+        year:
+          type: integer
+          example: 2023
+        month:
+          type: integer
+          example: 6
+        day:
+          type: integer
+          example: 15
+        date:
+          type: string
+          example: "2023-06-15"
+        hour:
+          type: integer
+          nullable: true
+          example: 22
+        crime_type:
+          type: string
+          example: "Robo"
+        crime_subtype:
+          type: string
+          nullable: true
+          example: "Robo con arma"
+        weapon_used:
+          type: boolean
+          nullable: true
+          example: true
+        motorcycle_used:
+          type: boolean
+          nullable: true
+          example: false
+        neighborhood:
+          type: string
+          nullable: true
+          example: "Palermo"
+        commune:
+          type: integer
+          nullable: true
+          example: 14
+        quantity:
+          type: integer
+          example: 1
+        location:
+          $ref: "#/components/schemas/GeoJSONPoint"
+
+    NearbyCrimesResponse:
+      type: object
+      required:
+        - lat
+        - lng
+        - radius_meters
+        - count
+        - items
+      properties:
+        lat:
+          type: number
+          format: double
+          example: -34.6037
+        lng:
+          type: number
+          format: double
+          example: -58.3816
+        radius_meters:
+          type: integer
+          example: 300
+        count:
+          type: integer
+          example: 5
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Crime"
+
+    Waypoint:
+      type: object
+      required:
+        - lat
+        - lng
+      properties:
+        lat:
+          type: number
+          format: double
+          example: -34.6037
+        lng:
+          type: number
+          format: double
+          example: -58.3816
+
+    RouteResponse:
+      type: object
+      required:
+        - origin
+        - destination
+        - profile
+        - distance_meters
+        - duration_seconds
+        - geometry
+      properties:
+        origin:
+          $ref: "#/components/schemas/Waypoint"
+        destination:
+          $ref: "#/components/schemas/Waypoint"
+        profile:
+          type: string
+          enum:
+            - driving-car
+            - foot-walking
+            - cycling-regular
+          example: driving-car
+        distance_meters:
+          type: number
+          format: double
+          example: 3241.5
+        duration_seconds:
+          type: number
+          format: double
+          example: 478.2
+        geometry:
+          $ref: "#/components/schemas/GeoJSONLineString"

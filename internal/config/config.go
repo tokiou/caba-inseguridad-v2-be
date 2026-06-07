@@ -12,6 +12,8 @@ type Config struct {
 	MongoURI              string
 	MongoDatabase         string
 	MongoCrimesCollection string
+	ORSAPIKey             string
+	ORSBaseURL            string
 }
 
 func Load() Config {
@@ -23,6 +25,8 @@ func Load() Config {
 		MongoURI:              getEnv("MONGO_URI", "mongodb://localhost:27017"),
 		MongoDatabase:         getEnv("MONGO_DATABASE", "caba_routes"),
 		MongoCrimesCollection: getEnv("MONGO_CRIMES_COLLECTION", "crimes"),
+		ORSAPIKey:             getEnv("ORS_API_KEY", ""),
+		ORSBaseURL:            getEnv("ORS_BASE_URL", "https://api.openrouteservice.org"),
 	}
 }
 

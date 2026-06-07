@@ -4,11 +4,13 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/tokiou/caba-inseguridad-routes-go/internal/config"
 	"github.com/tokiou/caba-inseguridad-routes-go/internal/crimes"
 	"github.com/tokiou/caba-inseguridad-routes-go/internal/health"
 	mongoplatform "github.com/tokiou/caba-inseguridad-routes-go/internal/platform/mongo"
+	"github.com/tokiou/caba-inseguridad-routes-go/internal/routes"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
@@ -30,10 +32,15 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger) (*App, error)
 	crimesRepo := crimes.NewMongoRepository(crimesCollection)
 	crimesService := crimes.NewService(crimesRepo)
 	crimesHandler := crimes.NewHandler(crimesService, log)
+
+	orsClient := routes.NewORSClient(cfg.ORSAPIKey, cfg.ORSBaseURL, &http.Client{Timeout: 10 * time.Second})
+	routesService := routes.NewService(orsClient)
+	routesHandler := routes.NewHandler(routesService, log)
+
 	healthHandler := health.NewHandler()
 
 	return &App{
-		Router:      NewRouter(healthHandler, crimesHandler),
+		Router:      NewRouter(healthHandler, crimesHandler, routesHandler),
 		mongoClient: mongoClient,
 	}, nil
 }
