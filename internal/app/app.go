@@ -40,7 +40,7 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger) (*App, error)
 	healthHandler := health.NewHandler()
 
 	return &App{
-		Router:      NewRouter(healthHandler, crimesHandler, routesHandler),
+		Router:      NewRouter(log, healthHandler, crimesHandler, routesHandler),
 		mongoClient: mongoClient,
 	}, nil
 }

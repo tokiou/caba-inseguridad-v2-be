@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 )
 
 type ORSClient struct {
@@ -49,7 +51,8 @@ func (c *ORSClient) GetRoute(ctx context.Context, query RouteQuery) (Route, erro
 		return Route{}, fmt.Errorf("routes: build request: %w", ErrExternalService)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("Accept", "application/json")
+	// ORS's GET directions endpoint only serves GeoJSON; "application/json" yields a 406.
+	req.Header.Set("Accept", "application/geo+json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -57,11 +60,19 @@ func (c *ORSClient) GetRoute(ctx context.Context, query RouteQuery) (Route, erro
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 500 {
-		return Route{}, fmt.Errorf("routes: ORS server error %d: %w", resp.StatusCode, ErrExternalService)
-	}
 	if resp.StatusCode >= 400 {
-		return Route{}, fmt.Errorf("routes: ORS no route %d: %w", resp.StatusCode, ErrRouteNotFound)
+		// Capture a bounded slice of the body so the wrapped error carries ORS's
+		// own diagnostic (e.g. an auth or rate-limit message) into the logs.
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		detail := strings.TrimSpace(string(body))
+
+		// ORS returns 404 only when no route exists between the points. Every
+		// other 4xx/5xx (401/403 auth, 429 rate limit, 400 bad request, 5xx) is
+		// an upstream or configuration problem — NOT a missing route.
+		if resp.StatusCode == http.StatusNotFound {
+			return Route{}, fmt.Errorf("routes: ORS found no route (status %d): %s: %w", resp.StatusCode, detail, ErrRouteNotFound)
+		}
+		return Route{}, fmt.Errorf("routes: ORS request failed (status %d): %s: %w", resp.StatusCode, detail, ErrExternalService)
 	}
 
 	var orsResp orsResponse

@@ -31,13 +31,13 @@ func (h *Handler) Register(r chi.Router) {
 func (h *Handler) GetNearby(w http.ResponseWriter, r *http.Request) {
 	query, err := parseNearbyCrimesQuery(r)
 	if err != nil {
-		h.writeError(w, err)
+		h.writeError(w, r, err)
 		return
 	}
 
 	response, err := h.service.GetNearby(r.Context(), query)
 	if err != nil {
-		h.writeError(w, err)
+		h.writeError(w, r, err)
 		return
 	}
 
@@ -77,14 +77,14 @@ func parseNearbyCrimesQuery(r *http.Request) (NearbyCrimesQuery, error) {
 	return NearbyCrimesQuery{Lat: lat, Lng: lng, RadiusMeters: radius}, nil
 }
 
-func (h *Handler) writeError(w http.ResponseWriter, err error) {
+func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrInvalidCoordinates):
 		httpx.WriteInvalidRequest(w, "lat and lng are required and must be valid CABA coordinates")
 	case errors.Is(err, ErrInvalidRadius):
 		httpx.WriteInvalidRequest(w, "radius must be between 1 and 2000 meters")
 	default:
-		h.log.Error("nearby crimes internal error", "error", err)
+		httpx.LogWith(h.log, r).Error("nearby crimes internal error", "err", err)
 		httpx.WriteInternalError(w, "could not fetch nearby crimes")
 	}
 }

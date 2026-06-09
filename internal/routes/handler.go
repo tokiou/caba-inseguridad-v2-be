@@ -31,13 +31,13 @@ func (h *Handler) Register(r chi.Router) {
 func (h *Handler) GetRoute(w http.ResponseWriter, r *http.Request) {
 	query, err := parseRouteQuery(r)
 	if err != nil {
-		h.writeError(w, err)
+		h.writeError(w, r, err)
 		return
 	}
 
 	response, err := h.service.GetRoute(r.Context(), query)
 	if err != nil {
-		h.writeError(w, err)
+		h.writeError(w, r, err)
 		return
 	}
 
@@ -80,7 +80,7 @@ func parseRequiredFloat(s string) (float64, error) {
 	return strconv.ParseFloat(s, 64)
 }
 
-func (h *Handler) writeError(w http.ResponseWriter, err error) {
+func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrInvalidCoordinates):
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "origin and destination must be valid CABA coordinates")
@@ -91,9 +91,10 @@ func (h *Handler) writeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrRouteNotFound):
 		httpx.WriteError(w, http.StatusNotFound, "route_not_found", "no route found between the given points")
 	case errors.Is(err, ErrExternalService):
+		httpx.LogWith(h.log, r).Error("routes external service error", "err", err)
 		httpx.WriteError(w, http.StatusBadGateway, "external_service_error", "route service is temporarily unavailable")
 	default:
-		h.log.Error("routes internal error", "error", err)
+		httpx.LogWith(h.log, r).Error("routes internal error", "err", err)
 		httpx.WriteInternalError(w, "could not calculate route")
 	}
 }

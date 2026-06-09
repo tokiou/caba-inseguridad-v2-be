@@ -66,6 +66,8 @@ HTTP_PORT=8080
 MONGO_URI=mongodb://localhost:27017
 MONGO_DATABASE=caba_routes
 MONGO_CRIMES_COLLECTION=crimes
+LOG_LEVEL=info          # debug | info | warn | error
+LOG_FORMAT=json         # json (prod) | text (colored dev console)
 ```
 
 Copy `.env.example` to `.env` before running.

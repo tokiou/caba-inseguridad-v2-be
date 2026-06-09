@@ -14,6 +14,8 @@ type Config struct {
 	MongoCrimesCollection string
 	ORSAPIKey             string
 	ORSBaseURL            string
+	LogLevel              string
+	LogFormat             string
 }
 
 func Load() Config {
@@ -27,6 +29,8 @@ func Load() Config {
 		MongoCrimesCollection: getEnv("MONGO_CRIMES_COLLECTION", "crimes"),
 		ORSAPIKey:             getEnv("ORS_API_KEY", ""),
 		ORSBaseURL:            getEnv("ORS_BASE_URL", "https://api.openrouteservice.org"),
+		LogLevel:              getEnv("LOG_LEVEL", "info"),
+		LogFormat:             getEnv("LOG_FORMAT", "json"),
 	}
 }
 

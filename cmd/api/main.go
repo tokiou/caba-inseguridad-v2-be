@@ -12,19 +12,21 @@ import (
 
 	"github.com/tokiou/caba-inseguridad-routes-go/internal/app"
 	"github.com/tokiou/caba-inseguridad-routes-go/internal/config"
+	loggerplatform "github.com/tokiou/caba-inseguridad-routes-go/internal/platform/logger"
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-
 	cfg := config.Load()
+
+	logger := loggerplatform.New(cfg.LogFormat, cfg.LogLevel)
+	slog.SetDefault(logger)
 
 	startCtx, startCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer startCancel()
 
 	application, err := app.New(startCtx, cfg, logger)
 	if err != nil {
-		logger.Error("could not initialize app", "error", err)
+		logger.Error("could not initialize app", "err", err)
 		os.Exit(1)
 	}
 
@@ -39,7 +41,7 @@ func main() {
 	go func() {
 		logger.Info("server listening", "addr", srv.Addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Error("server error", "error", err)
+			logger.Error("server error", "err", err)
 			os.Exit(1)
 		}
 	}()
@@ -54,11 +56,11 @@ func main() {
 	defer shutdownCancel()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		logger.Error("http shutdown error", "error", err)
+		logger.Error("http shutdown error", "err", err)
 	}
 
 	if err := application.Close(shutdownCtx); err != nil {
-		logger.Error("mongo disconnect error", "error", err)
+		logger.Error("mongo disconnect error", "err", err)
 	}
 
 	logger.Info("server stopped")

@@ -15,7 +15,7 @@ type ErrorResponse struct {
 func WriteJSON(w http.ResponseWriter, status int, data any) {
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(data); err != nil {
-		slog.Error("failed to encode JSON response", "error", err)
+		slog.Error("failed to encode JSON response", "err", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
