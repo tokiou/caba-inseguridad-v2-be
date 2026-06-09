@@ -1,6 +1,12 @@
 {
   "version": 1,
   "skills": {
+    "go-logging": {
+      "source": "cxuu/golang-skills",
+      "sourceType": "github",
+      "skillPath": "skills/go-logging/SKILL.md",
+      "computedHash": "268a969b7ae3ce99100cf60eb0721880f6faa00c45d01db8be1c377adf61bebd"
+    },
     "golang-code-style": {
       "source": "samber/cc-skills-golang",
       "sourceType": "github",
