@@ -7,6 +7,8 @@ import (
 const (
 	DefaultRadiusMeters = 300
 	MaxRadiusMeters     = 2000
+	DefaultLimit        = 100
+	MaxLimit            = 500
 )
 
 type Service struct {
@@ -23,27 +25,39 @@ func (s *Service) GetNearby(ctx context.Context, query NearbyCrimesQuery) (Nearb
 	if query.RadiusMeters == 0 {
 		query.RadiusMeters = DefaultRadiusMeters
 	}
+	if query.Limit == 0 {
+		query.Limit = DefaultLimit
+	}
 
 	if !isValidCABACoordinates(query.Lat, query.Lng) {
 		return NearbyCrimesResponse{}, ErrInvalidCoordinates
 	}
-
 	if !isValidRadius(query.RadiusMeters) {
 		return NearbyCrimesResponse{}, ErrInvalidRadius
 	}
+	if !isValidLimit(query.Limit) {
+		return NearbyCrimesResponse{}, ErrInvalidLimit
+	}
 
-	items, err := s.repository.FindNearby(ctx, query)
+	page, err := s.repository.FindNearby(ctx, query)
 	if err != nil {
 		return NearbyCrimesResponse{}, err
 	}
 
-	return NearbyCrimesResponse{
+	response := NearbyCrimesResponse{
 		Lat:          query.Lat,
 		Lng:          query.Lng,
 		RadiusMeters: query.RadiusMeters,
-		Count:        len(items),
-		Items:        items,
-	}, nil
+		Count:        len(page.Items),
+		Items:        page.Items,
+		HasMore:      page.HasMore,
+	}
+	if page.Next != nil {
+		token := page.Next.Encode()
+		response.NextCursor = &token
+	}
+
+	return response, nil
 }
 
 func isValidCABACoordinates(lat float64, lng float64) bool {
@@ -52,4 +66,8 @@ func isValidCABACoordinates(lat float64, lng float64) bool {
 
 func isValidRadius(radius int) bool {
 	return radius >= 1 && radius <= MaxRadiusMeters
+}
+
+func isValidLimit(limit int) bool {
+	return limit >= 1 && limit <= MaxLimit
 }

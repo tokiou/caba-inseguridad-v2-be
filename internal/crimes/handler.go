@@ -50,6 +50,8 @@ func parseNearbyCrimesQuery(r *http.Request) (NearbyCrimesQuery, error) {
 	latRaw := values.Get("lat")
 	lngRaw := values.Get("lng")
 	radiusRaw := values.Get("radius")
+	limitRaw := values.Get("limit")
+	cursorRaw := values.Get("cursor")
 
 	if latRaw == "" || lngRaw == "" {
 		return NearbyCrimesQuery{}, ErrInvalidCoordinates
@@ -74,7 +76,25 @@ func parseNearbyCrimesQuery(r *http.Request) (NearbyCrimesQuery, error) {
 		radius = parsedRadius
 	}
 
-	return NearbyCrimesQuery{Lat: lat, Lng: lng, RadiusMeters: radius}, nil
+	limit := 0
+	if limitRaw != "" {
+		parsedLimit, err := strconv.Atoi(limitRaw)
+		if err != nil {
+			return NearbyCrimesQuery{}, ErrInvalidLimit
+		}
+		limit = parsedLimit
+	}
+
+	var cursor *Cursor
+	if cursorRaw != "" {
+		decoded, err := DecodeCursor(cursorRaw)
+		if err != nil {
+			return NearbyCrimesQuery{}, err
+		}
+		cursor = &decoded
+	}
+
+	return NearbyCrimesQuery{Lat: lat, Lng: lng, RadiusMeters: radius, Limit: limit, Cursor: cursor}, nil
 }
 
 func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, err error) {
@@ -83,6 +103,10 @@ func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, err error) 
 		httpx.WriteInvalidRequest(w, "lat and lng are required and must be valid CABA coordinates")
 	case errors.Is(err, ErrInvalidRadius):
 		httpx.WriteInvalidRequest(w, "radius must be between 1 and 2000 meters")
+	case errors.Is(err, ErrInvalidLimit):
+		httpx.WriteInvalidRequest(w, "limit must be between 1 and 500")
+	case errors.Is(err, ErrInvalidCursor):
+		httpx.WriteInvalidRequest(w, "cursor is not a valid pagination token")
 	default:
 		httpx.LogWith(h.log, r).Error("nearby crimes internal error", "err", err)
 		httpx.WriteInternalError(w, "could not fetch nearby crimes")

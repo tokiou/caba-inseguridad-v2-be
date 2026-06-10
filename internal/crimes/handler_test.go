@@ -23,6 +23,8 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+func strptr(s string) *string { return &s }
+
 func TestHandlerGetNearby(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -58,6 +60,27 @@ func TestHandlerGetNearby(t *testing.T) {
 			svc:        &fakeService{resp: NearbyCrimesResponse{RadiusMeters: 300, Items: []Crime{}}},
 			wantStatus: http.StatusOK,
 			wantBody:   `"radius_meters":300`,
+		},
+		{
+			name:       "400 when limit is not a number",
+			url:        "/api/v1/crimes/nearby?lat=-34.5895&lng=-58.4201&limit=abc",
+			svc:        &fakeService{},
+			wantStatus: http.StatusBadRequest,
+			wantBody:   "limit must be between 1 and 500",
+		},
+		{
+			name:       "400 when cursor is malformed",
+			url:        "/api/v1/crimes/nearby?lat=-34.5895&lng=-58.4201&cursor=not-a-valid-token",
+			svc:        &fakeService{},
+			wantStatus: http.StatusBadRequest,
+			wantBody:   "cursor is not a valid pagination token",
+		},
+		{
+			name:       "200 exposes next_cursor and has_more",
+			url:        "/api/v1/crimes/nearby?lat=-34.5895&lng=-58.4201&radius=300&limit=1",
+			svc:        &fakeService{resp: NearbyCrimesResponse{RadiusMeters: 300, Items: []Crime{}, HasMore: true, NextCursor: strptr("eyJkIjo4NCwiaWQiOjF9")}},
+			wantStatus: http.StatusOK,
+			wantBody:   `"next_cursor":"eyJkIjo4NCwiaWQiOjF9"`,
 		},
 		{
 			name:       "500 when service returns unexpected error",
