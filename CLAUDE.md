@@ -36,14 +36,28 @@ internal/
     service_test.go
     handler_test.go
     repository_integration_test.go # //go:build integration — live PostGIS test
+  roadgraph/                      # walkable road graph status (foundation)
+    model.go                      # GraphStats
+    repository.go                 # Repository interface
+    postgres_repository.go        # PostgresRepository (counts + ST_Extent bbox)
+    service.go                    # status orchestration
+    handler.go                    # GET /api/v1/roadgraph/stats
+    service_test.go / handler_test.go
+    postgres_repository_integration_test.go # //go:build integration
   httpx/response.go               # shared JSON helpers
+scripts/osm/                      # offline OSM → road graph import (not queried by the API)
+  download_caba_osm.sh            # fetch CABA .pbf into data/osm/
+  import_osm_graph.sh             # osm2pgrouting (foot profile) → osm_ways / osm_ways_vertices_pgr
+  mapconfig_foot.xml              # osm2pgrouting pedestrian highway-class config
+  normalize_osm_graph.sql         # raw osm_* tables → road_nodes / road_edges (idempotent)
+  cleanup_road_graph.sql          # mark anomalous edges is_routable=false (non-destructive, idempotent)
 etl/python/
   analyze_raw_data.py             # raw quality report
   normalize_crimes.py             # XLSX → JSONL normalization
   load_to_postgres.py             # upsert into PostgreSQL + PostGIS (active loader)
   load_to_mongo.py                # legacy MongoDB loader (kept for reference)
   requirements.txt
-migrations/                       # SQL migrations (000001_enable_postgis, 000002_create_crimes)
+migrations/                       # SQL migrations (000001_enable_postgis … 000006_seed_risk_model_v1)
 data/
   raw/                            # source XLSX files (not committed)
   processed/                      # generated JSONL/JSON artifacts
@@ -76,8 +90,9 @@ LOG_LEVEL=info          # debug | info | warn | error
 LOG_FORMAT=json         # json (prod) | text (colored dev console)
 ```
 
-The Postgres container maps host port **5434** → container 5432 (avoids clashes with other local
-Postgres instances). `POSTGRES_HOST/PORT/DB/USER/PASSWORD` are also read by docker-compose and the ETL.
+The Postgres container (`pgrouting/pgrouting:16-3.4-3.6.1` — PostGIS 3.4 + pgRouting 3.6 on PG16) maps
+host port **5434** → container 5432 (avoids clashes with other local Postgres instances).
+`POSTGRES_HOST/PORT/DB/USER/PASSWORD` are also read by docker-compose, the ETL, and the OSM import.
 
 Copy `.env.example` to `.env` before running.
 
@@ -103,21 +118,47 @@ python load_to_postgres.py    # upserts into PostgreSQL + PostGIS (idempotent; r
 
 Normalized schema includes `source_id` (unique key), `location` as GeoJSON Point with `[lng, lat]`, and boolean fields `weapon_used` / `motorcycle_used`.
 
+## OSM road graph (offline import)
+
+Builds the walkable graph for CABA from OpenStreetMap. The `.pbf` and the raw `osm_*` tables are
+build inputs — never queried by the API; only the normalized `road_nodes` / `road_edges` are.
+
+```bash
+scripts/osm/download_caba_osm.sh          # → data/osm/caba.osm.pbf (skip if present; --force to redo)
+scripts/osm/import_osm_graph.sh           # osm2pgrouting (foot profile) → osm_ways / osm_ways_vertices_pgr
+psql "$DATABASE_URL" -f scripts/osm/normalize_osm_graph.sql   # → road_nodes / road_edges (idempotent)
+psql "$DATABASE_URL" -f scripts/osm/cleanup_road_graph.sql    # mark non-routable edges (idempotent)
+```
+
+osm2pgrouting 2.x reads OSM XML, so `import_osm_graph.sh` converts the `.pbf` with `osmium` first; it
+runs both tools inside a throwaway container by default (set `OSM_IMPORT_NATIVE=1` to use host
+binaries). `cleanup_road_graph.sql` marks anomalous edges (zero-length, self-loops, invalid geometry,
+>5 km) `is_routable = false` **without deleting** them; routing reads the `routable_road_edges` view.
+Check the result with `GET /api/v1/roadgraph/stats` (`routable_edges` / `excluded_edges`).
+
 ## Completed milestones
 
 | # | Spec | Status |
 |---|------|--------|
 | 001 | Initial data pipeline (ETL) | done |
-| 002 | Go crimes API + MongoDB geospatial query | done |
+| 002 | Go crimes API + MongoDB geospatial query (since migrated to PostGIS) | done |
+| — | Road graph + edge-risk foundation (OSM import, schema, `/roadgraph/stats`) | done |
 
 ## Not yet implemented
 
-- OpenRouteService integration
-- Safe route calculation / risk scoring
-- Route endpoint
+- Safe route calculation / risk-adjusted routing (Dijkstra / A* / pgRouting over the graph)
+- Edge risk scoring worker (populating `edge_risk_scores`)
+- `/safe-routes` endpoint
 - Frontend
 - Authentication
 - Aggregated statistics
+
+## Git & version control
+
+> **RULE — never push without an explicit instruction.** Do **not** run `git push` (or otherwise
+> publish changes to the remote) unless the user explicitly asks for it in that message. Approval to
+> push once does not carry over to later changes — each push needs its own go-ahead. Committing
+> locally is fine when finishing a unit of work, but pushing is always the user's call.
 
 ## Development workflow
 

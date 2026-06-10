@@ -11,6 +11,7 @@ import (
 	"github.com/tokiou/caba-inseguridad-routes-go/internal/crimes"
 	"github.com/tokiou/caba-inseguridad-routes-go/internal/health"
 	postgresplatform "github.com/tokiou/caba-inseguridad-routes-go/internal/platform/postgres"
+	"github.com/tokiou/caba-inseguridad-routes-go/internal/roadgraph"
 	"github.com/tokiou/caba-inseguridad-routes-go/internal/routes"
 )
 
@@ -33,10 +34,14 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger) (*App, error)
 	routesService := routes.NewService(orsClient)
 	routesHandler := routes.NewHandler(routesService, log)
 
+	roadGraphRepo := roadgraph.NewRepository(pool)
+	roadGraphService := roadgraph.NewService(roadGraphRepo)
+	roadGraphHandler := roadgraph.NewHandler(roadGraphService, log)
+
 	healthHandler := health.NewHandler()
 
 	return &App{
-		Router: NewRouter(log, healthHandler, crimesHandler, routesHandler),
+		Router: NewRouter(log, healthHandler, crimesHandler, routesHandler, roadGraphHandler),
 		pool:   pool,
 	}, nil
 }

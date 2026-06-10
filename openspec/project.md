@@ -12,11 +12,15 @@ minimizes exposure to crime hotspots. Crime data comes from open CABA datasets.
 
 - **Go 1.23** — HTTP API (`github.com/tokiou/caba-inseguridad-routes-go`), `chi` router, `godotenv`.
 - **Python 3** — ETL pipeline under `etl/python/`.
-- **PostgreSQL + PostGIS** — geospatial crime data (`geom GEOMETRY(Point,4326)`, GiST index). Both the
-  ETL load path and the Go read path (`GET /api/v1/crimes/nearby`) run on Postgres. MongoDB has been
-  removed from the Go app.
+- **PostgreSQL + PostGIS + pgRouting** — geospatial crime data (`geom GEOMETRY(Point,4326)`, GiST
+  index) and the walkable road graph. Both the ETL load path and the Go read path
+  (`GET /api/v1/crimes/nearby`) run on Postgres. MongoDB has been removed from the Go app. The DB
+  image is `pgrouting/pgrouting:16-3.4-3.6.1` (PostGIS 3.4 + pgRouting 3.6 on PG16), host port 5434.
 - **pgx (jackc/pgx v5)** — Postgres driver + connection pool. **sqlc** will be added for relational
   CRUD (future users / saved-routes).
+- **OpenStreetMap + osm2pgrouting** — offline source for the CABA walkable graph (`scripts/osm/`).
+  The `.pbf` and the raw `osm_*` tables are build inputs; the Go API only queries the normalized
+  `road_nodes` / `road_edges`.
 
 ## Capabilities (source of truth in `specs/`)
 
@@ -24,6 +28,9 @@ minimizes exposure to crime hotspots. Crime data comes from open CABA datasets.
 - `health-check` — `GET /api/v1/health`.
 - `crimes-api` — `GET /api/v1/crimes/nearby` geospatial proximity query.
 - `routing` — `GET /api/v1/routes` via OpenRouteService.
+- `road-graph` — CABA walkable graph foundation (`road_nodes` / `road_edges`), risk schema
+  (`risk_model_versions` / `edge_risk_scores`), and `GET /api/v1/roadgraph/stats`. Routing/scoring
+  over the graph are future capabilities.
 - `logging` — structured per-request logging, request-ID correlation, panic recovery.
 
 ## Architecture rules (do not skip layers)

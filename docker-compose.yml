@@ -1,6 +1,8 @@
 services:
   postgres:
-    image: postgis/postgis:16-3.4
+    # PostGIS 3.4 + pgRouting 3.6 on PostgreSQL 16 (superset of postgis/postgis:16-3.4).
+    # pgRouting is needed for the walkable road graph / future safe-route path queries.
+    image: pgrouting/pgrouting:16-3.4-3.6.1
     container_name: postgres
     restart: unless-stopped
     env_file:

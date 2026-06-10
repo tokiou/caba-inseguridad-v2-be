@@ -1,0 +1,4 @@
+-- pgRouting may be shared by other routing objects in the database.
+-- Dropping it can fail if dependent objects still exist, so this down
+-- migration is intentionally a no-op. Drop manually if truly needed:
+--   DROP EXTENSION IF EXISTS pgrouting;
