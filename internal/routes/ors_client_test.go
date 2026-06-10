@@ -27,7 +27,7 @@ func newTestClient(status int, body string) *ORSClient {
 	return NewORSClient("test-key", "https://ors.example", &http.Client{Transport: transport})
 }
 
-func TestORSClientGetRoute_StatusMapping(t *testing.T) {
+func TestORSClientFetchRoute_StatusMapping(t *testing.T) {
 	const okBody = `{"features":[{"geometry":{"type":"LineString","coordinates":[[-58.38,-34.60],[-58.42,-34.59]]},"properties":{"summary":{"distance":3241.5,"duration":478.2}}}]}`
 
 	tests := []struct {
@@ -52,7 +52,7 @@ func TestORSClientGetRoute_StatusMapping(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			client := newTestClient(tt.status, tt.body)
 
-			route, err := client.GetRoute(context.Background(), query)
+			route, err := client.FetchRoute(context.Background(), query)
 
 			if tt.wantErr == nil {
 				if err != nil {

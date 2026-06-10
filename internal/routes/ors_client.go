@@ -38,7 +38,7 @@ type orsResponse struct {
 	} `json:"features"`
 }
 
-func (c *ORSClient) GetRoute(ctx context.Context, query RouteQuery) (Route, error) {
+func (c *ORSClient) FetchRoute(ctx context.Context, query RouteQuery) (Route, error) {
 	url := fmt.Sprintf(
 		"%s/v2/directions/%s?start=%f,%f&end=%f,%f",
 		c.baseURL, query.Profile,

@@ -12,7 +12,7 @@ type fakeClient struct {
 	receivedQuery RouteQuery
 }
 
-func (c *fakeClient) GetRoute(_ context.Context, query RouteQuery) (Route, error) {
+func (c *fakeClient) FetchRoute(_ context.Context, query RouteQuery) (Route, error) {
 	c.receivedQuery = query
 	return c.route, c.err
 }

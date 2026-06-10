@@ -3,7 +3,7 @@ package routes
 import "context"
 
 type routingClient interface {
-	GetRoute(ctx context.Context, query RouteQuery) (Route, error)
+	FetchRoute(ctx context.Context, query RouteQuery) (Route, error)
 }
 
 const DefaultProfile = "driving-car"
@@ -43,7 +43,7 @@ func (s *Service) GetRoute(ctx context.Context, query RouteQuery) (RouteResponse
 		return RouteResponse{}, ErrSamePoint
 	}
 
-	route, err := s.client.GetRoute(ctx, query)
+	route, err := s.client.FetchRoute(ctx, query)
 	if err != nil {
 		return RouteResponse{}, err
 	}
