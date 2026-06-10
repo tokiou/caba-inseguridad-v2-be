@@ -60,7 +60,7 @@ func main() {
 	}
 
 	if err := application.Close(shutdownCtx); err != nil {
-		logger.Error("mongo disconnect error", "err", err)
+		logger.Error("datastore close error", "err", err)
 	}
 
 	logger.Info("server stopped")

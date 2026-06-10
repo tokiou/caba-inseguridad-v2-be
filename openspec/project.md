@@ -12,8 +12,11 @@ minimizes exposure to crime hotspots. Crime data comes from open CABA datasets.
 
 - **Go 1.23** — HTTP API (`github.com/tokiou/caba-inseguridad-routes-go`), `chi` router, `godotenv`.
 - **Python 3** — ETL pipeline under `etl/python/`.
-- **PostgreSQL + PostGIS** — geospatial crime data (`geom GEOMETRY(Point,4326)`, GiST index). The ETL
-  load path targets Postgres. The Go read path still uses MongoDB and is pending migration.
+- **PostgreSQL + PostGIS** — geospatial crime data (`geom GEOMETRY(Point,4326)`, GiST index). Both the
+  ETL load path and the Go read path (`GET /api/v1/crimes/nearby`) run on Postgres. MongoDB has been
+  removed from the Go app.
+- **pgx (jackc/pgx v5)** — Postgres driver + connection pool. **sqlc** will be added for relational
+  CRUD (future users / saved-routes).
 
 ## Capabilities (source of truth in `specs/`)
 
@@ -41,5 +44,7 @@ routes in `internal/app/routes.go`.
 ## Conventions
 
 - GeoJSON / PostGIS coordinate order is always `[longitude, latitude]` — never swap.
+- Data access: **pgx for PostGIS/geospatial** (raw SQL), **sqlc for relational CRUD**. sqlc cannot
+  analyze PostGIS functions, so geospatial queries stay on pgx.
 - Use `slog`; never log secrets (e.g. ORS API key / `Authorization`).
 - Quality gate: `go build ./...` and `go test ./...` must pass before a change is archived.

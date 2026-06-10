@@ -7,30 +7,26 @@ import (
 )
 
 type Config struct {
-	AppEnv                string
-	HTTPPort              string
-	MongoURI              string
-	MongoDatabase         string
-	MongoCrimesCollection string
-	ORSAPIKey             string
-	ORSBaseURL            string
-	LogLevel              string
-	LogFormat             string
+	AppEnv      string
+	HTTPPort    string
+	DatabaseURL string
+	ORSAPIKey   string
+	ORSBaseURL  string
+	LogLevel    string
+	LogFormat   string
 }
 
 func Load() Config {
 	_ = godotenv.Load()
 
 	return Config{
-		AppEnv:                getEnv("APP_ENV", "development"),
-		HTTPPort:              getEnv("HTTP_PORT", "8080"),
-		MongoURI:              getEnv("MONGO_URI", "mongodb://localhost:27017"),
-		MongoDatabase:         getEnv("MONGO_DATABASE", "caba_routes"),
-		MongoCrimesCollection: getEnv("MONGO_CRIMES_COLLECTION", "crimes"),
-		ORSAPIKey:             getEnv("ORS_API_KEY", ""),
-		ORSBaseURL:            getEnv("ORS_BASE_URL", "https://api.openrouteservice.org"),
-		LogLevel:              getEnv("LOG_LEVEL", "info"),
-		LogFormat:             getEnv("LOG_FORMAT", "json"),
+		AppEnv:      getEnv("APP_ENV", "development"),
+		HTTPPort:    getEnv("HTTP_PORT", "8080"),
+		DatabaseURL: getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5434/caba_routes?sslmode=disable"),
+		ORSAPIKey:   getEnv("ORS_API_KEY", ""),
+		ORSBaseURL:  getEnv("ORS_BASE_URL", "https://api.openrouteservice.org"),
+		LogLevel:    getEnv("LOG_LEVEL", "info"),
+		LogFormat:   getEnv("LOG_FORMAT", "json"),
 	}
 }
 

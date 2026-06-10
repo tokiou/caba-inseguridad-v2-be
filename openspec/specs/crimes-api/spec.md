@@ -5,9 +5,8 @@
 Expose nearby crimes for a given point in CABA via an HTTP endpoint, using a geospatial proximity
 query. This is the read API over the crime dataset produced by the data pipeline.
 
-> Current data access: **MongoDB `$nearSphere`** (`internal/crimes/mongo_repository.go`). Migration
-> of this read path to PostgreSQL + PostGIS (`ST_DWithin`) is planned but not yet implemented — the
-> data pipeline already loads PostGIS, the Go read path does not yet consume it.
+> Data access: **PostgreSQL + PostGIS `ST_DWithin`** via pgx
+> (`internal/crimes/repository.go`, `PostgresRepository`). MongoDB is no longer used.
 
 ## Requirements
 
@@ -55,13 +54,18 @@ HTTP 400 for invalid input.
 
 ### Requirement: Geospatial coordinate order
 
-The data layer SHALL query using GeoJSON `[longitude, latitude]` order.
+The data layer SHALL query **PostgreSQL + PostGIS** using `ST_DWithin` over the `geom`
+`GEOMETRY(Point, 4326)` column, with coordinates passed in `[longitude, latitude]` order, returning
+matches within the radius ordered nearest-first. The read path uses **pgx** (raw SQL); it no longer
+uses MongoDB.
 
-#### Scenario: Coordinates passed as [lng, lat]
+#### Scenario: Proximity query uses [lng, lat]
 
 - GIVEN the API receives `lat` and `lng`
-- WHEN it builds the geospatial query
-- THEN it passes coordinates as `[longitude, latitude]`, never `[latitude, longitude]`
+- WHEN the repository builds the PostGIS query
+- THEN it calls `ST_DWithin(geom::geography, ST_SetSRID(ST_MakePoint($lng,$lat),4326)::geography, $radius)`
+- AND results are ordered by `ST_Distance` ascending (nearest first)
+- AND `ST_X(geom)` maps to longitude and `ST_Y(geom)` to latitude in the returned records
 
 ### Requirement: Internal errors are not leaked
 
@@ -76,11 +80,12 @@ Data-layer failures SHALL surface as a generic HTTP 500 without exposing datasto
 
 ### Requirement: Layered architecture for the read path
 
-The request flow SHALL be `handler → service → repository interface → concrete repository`. Handlers
-MUST NOT contain data-access logic; repositories MUST NOT contain HTTP logic.
+The request flow SHALL be `handler → service → repository interface → PostgresRepository → PostgreSQL/PostGIS`.
+Handlers MUST NOT contain data-access logic; the repository MUST NOT contain HTTP logic. PostGIS /
+geospatial access uses pgx; relational CRUD (future capabilities) uses sqlc.
 
 #### Scenario: Layer boundaries respected
 
 - WHEN the crimes endpoint is implemented or modified
-- THEN HTTP parsing lives only in the handler, validation in the service, and data access behind the
-  `Repository` interface
+- THEN HTTP parsing lives only in the handler, validation in the service, and PostGIS access behind the
+  `Repository` interface implemented by `PostgresRepository`

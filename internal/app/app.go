@@ -6,30 +6,26 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tokiou/caba-inseguridad-routes-go/internal/config"
 	"github.com/tokiou/caba-inseguridad-routes-go/internal/crimes"
 	"github.com/tokiou/caba-inseguridad-routes-go/internal/health"
-	mongoplatform "github.com/tokiou/caba-inseguridad-routes-go/internal/platform/mongo"
+	postgresplatform "github.com/tokiou/caba-inseguridad-routes-go/internal/platform/postgres"
 	"github.com/tokiou/caba-inseguridad-routes-go/internal/routes"
-	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
 type App struct {
-	Router      http.Handler
-	mongoClient *mongo.Client
+	Router http.Handler
+	pool   *pgxpool.Pool
 }
 
 func New(ctx context.Context, cfg config.Config, log *slog.Logger) (*App, error) {
-	mongoClient, err := mongoplatform.NewClient(ctx, cfg.MongoURI)
+	pool, err := postgresplatform.NewPool(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return nil, err
 	}
 
-	crimesCollection := mongoClient.
-		Database(cfg.MongoDatabase).
-		Collection(cfg.MongoCrimesCollection)
-
-	crimesRepo := crimes.NewMongoRepository(crimesCollection)
+	crimesRepo := crimes.NewRepository(pool)
 	crimesService := crimes.NewService(crimesRepo)
 	crimesHandler := crimes.NewHandler(crimesService, log)
 
@@ -40,11 +36,14 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger) (*App, error)
 	healthHandler := health.NewHandler()
 
 	return &App{
-		Router:      NewRouter(log, healthHandler, crimesHandler, routesHandler),
-		mongoClient: mongoClient,
+		Router: NewRouter(log, healthHandler, crimesHandler, routesHandler),
+		pool:   pool,
 	}, nil
 }
 
-func (a *App) Close(ctx context.Context) error {
-	return a.mongoClient.Disconnect(ctx)
+// Close releases the Postgres connection pool. The context is accepted for a
+// uniform shutdown signature; pgxpool.Close blocks until connections are returned.
+func (a *App) Close(_ context.Context) error {
+	a.pool.Close()
+	return nil
 }
