@@ -1,0 +1,4 @@
+-- PostGIS may be shared by other objects/databases in the cluster.
+-- Dropping it can fail if geometry columns still exist, so this down
+-- migration is intentionally a no-op. Drop manually if truly needed:
+--   DROP EXTENSION IF EXISTS postgis;

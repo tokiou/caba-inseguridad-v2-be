@@ -1,3 +1,4 @@
 .env
 data/raw/*.xlsx
 data/processed/*.jsonl
+__pycache__/
