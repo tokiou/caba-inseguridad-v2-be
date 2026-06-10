@@ -35,14 +35,17 @@ internal/
 etl/python/
   analyze_raw_data.py             # raw quality report
   normalize_crimes.py             # XLSX → JSONL normalization
-  load_to_mongo.py                # upsert into MongoDB
+  load_to_postgres.py             # upsert into PostgreSQL + PostGIS (active loader)
+  load_to_mongo.py                # legacy MongoDB loader (kept for reference)
   requirements.txt
+migrations/                       # SQL migrations (000001_enable_postgis, 000002_create_crimes)
 data/
   raw/                            # source XLSX files (not committed)
   processed/                      # generated JSONL/JSON artifacts
-docs/sdd/
-  done/                           # completed specs
-  wip/                            # specs in progress
+openspec/                         # OpenSpec — spec-driven development (see Development workflow)
+  project.md                      # shared project context for change proposals
+  specs/                          # source of truth: current capabilities (one dir per capability)
+  changes/                        # proposed changes (one folder each); archive/ holds completed ones
 ```
 
 ## Architecture rules
@@ -112,19 +115,32 @@ Normalized schema includes `source_id` (unique key), `location` as GeoJSON Point
 
 ## Development workflow
 
-New features follow the layered spec → implement → test flow enforced by the subagents configured in `.claude/agents/`.
+**This project uses [OpenSpec](https://openspec.dev/) (spec-driven development). Write and agree on a
+spec BEFORE implementing any feature.** The previous `docs/sdd/` flow is retired; specs now live under
+`openspec/` (see `openspec/README.md`).
 
-### Starting a new feature
+### Starting a new feature (OpenSpec)
 
-Use `/agent-workflow <feature description>` to trigger the full automated pipeline:
+1. **Propose** — create `openspec/changes/<change-name>/` with:
+   - `proposal.md` — why, what, in/out of scope.
+   - `tasks.md` — ordered implementation tasks.
+   - `design.md` — technical decisions/trade-offs (when non-trivial).
+   - `specs/<capability>/spec.md` — **delta spec** with `## ADDED`, `## MODIFIED`, and/or
+     `## REMOVED Requirements` (each `### Requirement:` has at least one `#### Scenario:` in
+     GIVEN/WHEN/THEN form).
+2. **Review & agree** on the proposal before writing code.
+3. **Implement** the tasks following the layer rules below; keep `go build ./...` and `go test ./...`
+   green.
+4. **Archive** — merge the delta into `openspec/specs/`, then move the change folder to
+   `openspec/changes/archive/<YYYY-MM-DD>-<change-name>/` so `specs/` always reflects current state.
 
-```
-spec-analyst → spec-architect → spec-developer → spec-validator → (loop if <95%) → spec-tester
-```
+`openspec/specs/` is the source of truth for current, implemented behavior; `openspec/project.md`
+holds shared context (stack, architecture, conventions) for proposals.
 
-The pipeline produces spec documents under `docs/sdd/wip/`, then implementation code, then tests. Quality gate is 95% — the loop repeats analyst→developer until the validator scores above threshold.
-
-For design questions or architecture trade-offs before coding, invoke the `senior-backend-architect` subagent directly.
+For design questions or architecture trade-offs before coding, invoke the `senior-backend-architect`
+subagent directly. The spec-* subagents may assist within the OpenSpec flow (e.g. drafting a
+proposal, planning tasks, reviewing a diff), but the OpenSpec artifacts above — not `docs/sdd/` — are
+the deliverables.
 
 ### Subagent reference
 
@@ -141,12 +157,12 @@ For design questions or architecture trade-offs before coding, invoke the `senio
 | `senior-backend-architect` | Production-grade Go patterns, performance, observability |
 | `refactor-agent` | Improve structure/readability without changing behaviour |
 
-### Layer rules (enforced by spec-architect + spec-developer)
+### Layer rules
 
 Every new domain must follow the existing layered structure — no shortcuts:
 
 ```
-handler → service → repository interface → MongoRepository
+handler → service → repository interface → concrete repository (Mongo / Postgres) → datastore
 ```
 
-New domains live under `internal/<domain>/` with the same file split: `model.go`, `dto.go`, `repository.go`, `mongo_repository.go`, `service.go`, `handler.go`, plus `*_test.go` files. Register routes in `internal/app/routes.go`.
+New domains live under `internal/<domain>/` with the same file split: `model.go`, `dto.go`, `repository.go`, `<store>_repository.go`, `service.go`, `handler.go`, plus `*_test.go` files. Register routes in `internal/app/routes.go`.

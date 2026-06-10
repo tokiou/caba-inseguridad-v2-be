@@ -1,0 +1,45 @@
+# Project Context — caba-inseguridad-v2-be
+
+Shared context for OpenSpec change proposals. Keep this current so proposals stay aligned with the
+real system.
+
+## What this is
+
+Backend for **CABA Rutas Seguras**: given two points in Buenos Aires (CABA), return a route that
+minimizes exposure to crime hotspots. Crime data comes from open CABA datasets.
+
+## Stack
+
+- **Go 1.23** — HTTP API (`github.com/tokiou/caba-inseguridad-routes-go`), `chi` router, `godotenv`.
+- **Python 3** — ETL pipeline under `etl/python/`.
+- **PostgreSQL + PostGIS** — geospatial crime data (`geom GEOMETRY(Point,4326)`, GiST index). The ETL
+  load path targets Postgres. The Go read path still uses MongoDB and is pending migration.
+
+## Capabilities (source of truth in `specs/`)
+
+- `data-pipeline` — XLSX → analyze → normalize → load into PostgreSQL + PostGIS.
+- `health-check` — `GET /api/v1/health`.
+- `crimes-api` — `GET /api/v1/crimes/nearby` geospatial proximity query.
+- `routing` — `GET /api/v1/routes` via OpenRouteService.
+- `logging` — structured per-request logging, request-ID correlation, panic recovery.
+
+## Architecture rules (do not skip layers)
+
+```
+HTTP request → chi router → handler → service → repository interface → concrete repository → datastore
+```
+
+- Handlers parse HTTP params and return JSON. No data access, no business logic.
+- Services validate domain rules and call the repository. No HTTP, no datastore details.
+- Repositories encapsulate all data access. No HTTP logic.
+- `cmd/api/main.go` only wires dependencies and starts the server.
+
+New domains live under `internal/<domain>/` with the file split: `model.go`, `dto.go`,
+`repository.go`, `<store>_repository.go`, `service.go`, `handler.go`, plus `*_test.go`. Register
+routes in `internal/app/routes.go`.
+
+## Conventions
+
+- GeoJSON / PostGIS coordinate order is always `[longitude, latitude]` — never swap.
+- Use `slog`; never log secrets (e.g. ORS API key / `Authorization`).
+- Quality gate: `go build ./...` and `go test ./...` must pass before a change is archived.
