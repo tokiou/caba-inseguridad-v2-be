@@ -14,10 +14,17 @@ import (
 type fakeService struct {
 	stats GraphStats
 	err   error
+
+	route    WalkRoute
+	routeErr error
 }
 
 func (s *fakeService) GetStats(_ context.Context) (GraphStats, error) {
 	return s.stats, s.err
+}
+
+func (s *fakeService) WalkRoute(_ context.Context, _ WalkRouteQuery) (WalkRoute, error) {
+	return s.route, s.routeErr
 }
 
 func discardLogger() *slog.Logger {

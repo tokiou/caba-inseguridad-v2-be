@@ -9,10 +9,21 @@ import (
 type fakeRepository struct {
 	stats GraphStats
 	err   error
+
+	route      WalkRoute
+	routeErr   error
+	gotQuery   WalkRouteQuery
+	routeCalls int
 }
 
 func (r *fakeRepository) GetStats(_ context.Context) (GraphStats, error) {
 	return r.stats, r.err
+}
+
+func (r *fakeRepository) FindWalkRoute(_ context.Context, query WalkRouteQuery) (WalkRoute, error) {
+	r.gotQuery = query
+	r.routeCalls++
+	return r.route, r.routeErr
 }
 
 func TestServiceGetStats(t *testing.T) {
