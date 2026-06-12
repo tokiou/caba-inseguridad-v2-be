@@ -13,6 +13,7 @@ import (
 	postgresplatform "github.com/tokiou/caba-inseguridad-routes-go/internal/platform/postgres"
 	"github.com/tokiou/caba-inseguridad-routes-go/internal/roadgraph"
 	"github.com/tokiou/caba-inseguridad-routes-go/internal/routes"
+	"github.com/tokiou/caba-inseguridad-routes-go/internal/saferoutes"
 )
 
 type App struct {
@@ -38,10 +39,14 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger) (*App, error)
 	roadGraphService := roadgraph.NewService(roadGraphRepo)
 	roadGraphHandler := roadgraph.NewHandler(roadGraphService, log)
 
+	safeRoutesRepo := saferoutes.NewRepository(pool)
+	safeRoutesService := saferoutes.NewService(safeRoutesRepo)
+	safeRoutesHandler := saferoutes.NewHandler(safeRoutesService, log)
+
 	healthHandler := health.NewHandler()
 
 	return &App{
-		Router: NewRouter(log, healthHandler, crimesHandler, routesHandler, roadGraphHandler),
+		Router: NewRouter(log, healthHandler, crimesHandler, routesHandler, roadGraphHandler, safeRoutesHandler),
 		pool:   pool,
 	}, nil
 }

@@ -203,6 +203,89 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /routes/safe:
+    get:
+      tags:
+        - Routes
+      summary: Rutas caminables con exposición histórica estimada al delito
+      description: |
+        Calcula cuatro rutas caminables entre origen y destino sobre el grafo propio de CABA,
+        usando los risk scores precomputados del modelo activo (Network Temporal KDE):
+        `fastest`, `balanced`, `safest` y `least_safe_candidate`. Todas las cifras son
+        **exposición histórica estimada**, nunca garantías de seguridad.
+      operationId: getSafeRoutes
+      parameters:
+        - name: origin_lat
+          in: query
+          required: true
+          schema: { type: number, format: double, example: -34.58 }
+        - name: origin_lng
+          in: query
+          required: true
+          schema: { type: number, format: double, example: -58.42 }
+        - name: dest_lat
+          in: query
+          required: true
+          schema: { type: number, format: double, example: -34.60 }
+        - name: dest_lng
+          in: query
+          required: true
+          schema: { type: number, format: double, example: -58.38 }
+        - name: datetime
+          in: query
+          required: false
+          description: Momento de la caminata (RFC3339); por defecto, ahora en hora de Buenos Aires. Determina el contexto de riesgo (time_bucket + weekday_type).
+          schema:
+            type: string
+            format: date-time
+            example: "2026-06-12T23:00:00-03:00"
+      responses:
+        "200":
+          description: Rutas calculadas correctamente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SafeRoutesResponse"
+        "400":
+          description: Parámetros inválidos o punto fuera del grafo caminable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalid_request:
+                  value:
+                    error: invalid_request
+                    message: endpoints must be distinct and within CABA
+                outside_graph:
+                  value:
+                    error: origin_or_destination_outside_walkable_graph
+                    message: origin or destination is too far from the walkable road network
+        "404":
+          description: No hay camino caminable entre los puntos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: route_not_found
+                message: no walkable route between the points
+        "503":
+          description: No hay modelo de riesgo activo
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: risk_model_unavailable
+                message: no active risk model is available
+        "500":
+          description: Error interno
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   schemas:
     HealthResponse:
@@ -396,3 +479,91 @@ components:
           example: 478.2
         geometry:
           $ref: "#/components/schemas/GeoJSONLineString"
+
+    SafeRoutesResponse:
+      type: object
+      required:
+        - origin
+        - destination
+        - datetime
+        - time_bucket
+        - weekday_type
+        - model_version
+        - routes
+      properties:
+        origin:
+          $ref: "#/components/schemas/LatLng"
+        destination:
+          $ref: "#/components/schemas/LatLng"
+        datetime:
+          type: string
+          format: date-time
+          example: "2026-06-12T23:00:00-03:00"
+        time_bucket:
+          type: string
+          enum: [morning, afternoon, evening, night]
+          example: night
+        weekday_type:
+          type: string
+          enum: [weekday, weekend]
+          example: weekday
+        model_version:
+          type: object
+          properties:
+            id: { type: integer, format: int64, example: 4 }
+            name: { type: string, example: network_temporal_edge_risk_v1 }
+            type: { type: string, example: deterministic_network_kde }
+            train_until: { type: string, format: date, example: "2025-12-31" }
+        routes:
+          type: array
+          description: fastest, balanced, safest y least_safe_candidate (este último puede omitirse si no hay candidatos KSP).
+          items:
+            $ref: "#/components/schemas/SafeRoute"
+
+    SafeRoute:
+      type: object
+      required:
+        - kind
+        - distance_meters
+        - duration_minutes
+        - risk_score
+        - risk_level
+        - crime_metrics
+        - geometry
+      properties:
+        kind:
+          type: string
+          enum: [fastest, balanced, safest, least_safe_candidate]
+        distance_meters: { type: number, format: double, example: 4300 }
+        duration_minutes: { type: number, format: double, example: 57 }
+        risk_score: { type: number, format: double, minimum: 0, maximum: 1, example: 0.31 }
+        risk_level:
+          type: string
+          enum: [low, moderate, high]
+        extra_distance_vs_fastest_meters: { type: number, format: double, example: 500 }
+        extra_duration_vs_fastest_minutes: { type: number, format: double, example: 7 }
+        risk_reduction_vs_fastest_percent: { type: number, format: double, example: 42.5 }
+        high_risk_edge_meters: { type: number, format: double, example: 240 }
+        high_risk_edge_percent: { type: number, format: double, example: 5.6 }
+        max_edge_risk: { type: number, format: double, example: 0.82 }
+        avg_edge_risk: { type: number, format: double, example: 0.24 }
+        crime_metrics:
+          type: object
+          description: Sumas de métricas por tramo (exposición estimada, no incidentes distintos).
+          properties:
+            crime_count: { type: integer, example: 126 }
+            robbery_count: { type: integer, example: 72 }
+            theft_count: { type: integer, example: 31 }
+            threats_count: { type: integer, example: 8 }
+            armed_count: { type: integer, example: 24 }
+            motorcycle_count: { type: integer, example: 17 }
+            same_bucket_crime_count: { type: integer, example: 38 }
+        geometry:
+          $ref: "#/components/schemas/GeoJSONLineString"
+
+    LatLng:
+      type: object
+      required: [lat, lng]
+      properties:
+        lat: { type: number, format: double, example: -34.58 }
+        lng: { type: number, format: double, example: -58.42 }
