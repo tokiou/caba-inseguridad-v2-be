@@ -15,6 +15,10 @@
 --   self_loop                        from_node_id = to_node_id
 --   suspicious_long_edge_over_5000m  length_meters > 5000 (single indivisible
 --                                    urban edge; almost certainly an OSM artifact)
+--   disconnected_component           edge outside the largest connected component
+--                                    of the surviving routable graph (isolated
+--                                    plaza paths, pedestrian islands) — snapping
+--                                    to one strands the router with no path
 --
 -- Validation queries (run manually after cleanup):
 --
@@ -78,6 +82,35 @@ SET is_routable        = false,
     quality_checked_at = now()
 WHERE is_routable = true
   AND length_meters > 5000;
+
+-- Rule 5: edges outside the largest connected component of the graph that
+-- survived rules 1-4. Nearest-edge snapping can land on an isolated island
+-- (plaza footpaths, gated passages) and pgr_dijkstra then finds no path to
+-- anywhere — Plaza de Mayo routed to nothing because of a 2-node island.
+-- Must run last: components are computed over the surviving routable set.
+WITH components AS (
+    SELECT node, component
+    FROM pgr_connectedComponents(
+        'SELECT id, from_node_id AS source, to_node_id AS target,
+                length_meters AS cost
+         FROM road_edges WHERE is_walkable AND is_routable'
+    )
+),
+giant AS (
+    SELECT component
+    FROM components
+    GROUP BY component
+    ORDER BY COUNT(*) DESC
+    LIMIT 1
+)
+UPDATE road_edges e
+SET is_routable        = false,
+    excluded_reason    = 'disconnected_component',
+    quality_checked_at = now()
+FROM components c
+WHERE e.is_routable = true
+  AND c.node = e.from_node_id
+  AND c.component <> (SELECT component FROM giant);
 
 -- Recreate the routable surface (idempotent; harmless if unchanged).
 CREATE OR REPLACE VIEW routable_road_edges AS
