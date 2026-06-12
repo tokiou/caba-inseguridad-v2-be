@@ -5,6 +5,10 @@ services:
     image: pgrouting/pgrouting:16-3.4-3.6.1
     container_name: postgres
     restart: unless-stopped
+    # Docker's default /dev/shm (64 MB) starves parallel queries on the
+    # risk-scoring joins ("could not resize shared memory segment"). The
+    # pipeline also disables parallel gather per session as a belt-and-braces.
+    shm_size: 1g
     env_file:
       - .env
     environment:
