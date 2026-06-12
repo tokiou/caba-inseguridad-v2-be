@@ -28,9 +28,13 @@ minimizes exposure to crime hotspots. Crime data comes from open CABA datasets.
 - `health-check` — `GET /api/v1/health`.
 - `crimes-api` — `GET /api/v1/crimes/nearby` geospatial proximity query.
 - `routing` — `GET /api/v1/routes` via OpenRouteService.
-- `road-graph` — CABA walkable graph foundation (`road_nodes` / `road_edges`), risk schema
-  (`risk_model_versions` / `edge_risk_scores`), and `GET /api/v1/roadgraph/stats`. Routing/scoring
-  over the graph are future capabilities.
+- `road-graph` — CABA walkable graph foundation (`road_nodes` / `road_edges`), quality layer
+  (`routable_road_edges`), and `GET /api/v1/roadgraph/stats`.
+- `risk-scoring` — offline Network Temporal KDE pipeline (`etl/risk_network_kde/`): crime snapping,
+  network neighborhoods, per-edge risk scores by time bucket / weekday type
+  (`edge_risk_scores` / `edge_risk_score_components`), temporal backtest + activation gate.
+- `safe-routes` — `GET /api/v1/routes/safe` (`internal/saferoutes/`): fastest / balanced / safest /
+  least_safe_candidate over the local graph via pgRouting, costed with the active model's scores.
 - `logging` — structured per-request logging, request-ID correlation, panic recovery.
 
 ## Architecture rules (do not skip layers)

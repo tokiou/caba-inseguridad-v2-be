@@ -44,6 +44,14 @@ internal/
     handler.go                    # GET /api/v1/roadgraph/stats
     service_test.go / handler_test.go
     postgres_repository_integration_test.go # //go:build integration
+  saferoutes/                     # GET /api/v1/routes/safe — risk-weighted walking routes
+    model.go / dto.go / errors.go # route alternatives, metrics, sentinel errors
+    repository.go                 # Repository interface (routing-engine seam)
+    postgres_repository.go        # pgr_dijkstra / pgr_ksp with risk-weighted cost
+    risk_aggregation.go           # route risk = 0.75·weighted_avg + 0.25·max, levels, comparisons
+    service.go                    # validation, time-bucket/weekday resolution, profile orchestration
+    handler.go                    # parsing + error mapping (400/404/503/500)
+    *_test.go                     # unit + //go:build integration tests
   httpx/response.go               # shared JSON helpers
 scripts/osm/                      # offline OSM → road graph import (not queried by the API)
   download_caba_osm.sh            # fetch CABA .pbf into data/osm/
@@ -57,7 +65,14 @@ etl/python/
   load_to_postgres.py             # upsert into PostgreSQL + PostGIS (active loader)
   load_to_mongo.py                # legacy MongoDB loader (kept for reference)
   requirements.txt
-migrations/                       # SQL migrations (000001_enable_postgis … 000006_seed_risk_model_v1)
+etl/risk_network_kde/             # offline Network Temporal KDE risk pipeline (see Risk scoring)
+  cli.py                          # snap-crimes / build-neighborhoods / compute-scores / evaluate /
+                                  # evaluate-routes / calibrate / finalize / self-test
+  config.py / db.py / utils.py    # model params, connection, time-bucket helpers (mirrored in Go)
+  snap_crimes.py / graph_loader.py / build_neighborhoods.py
+  compute_scores.py / evaluate.py / evaluate_routes.py / calibrate.py / finalize.py
+  requirements.txt
+migrations/                       # SQL migrations (000001_enable_postgis … 000010_create_route_profiles)
 data/
   raw/                            # source XLSX files (not committed)
   processed/                      # generated JSONL/JSON artifacts
@@ -136,6 +151,31 @@ binaries). `cleanup_road_graph.sql` marks anomalous edges (zero-length, self-loo
 >5 km) `is_routable = false` **without deleting** them; routing reads the `routable_road_edges` view.
 Check the result with `GET /api/v1/roadgraph/stats` (`routable_edges` / `excluded_edges`).
 
+## Risk scoring (offline Python pipeline)
+
+Network Temporal KDE (`network_temporal_edge_risk_v1`, deterministic, no ML): crimes snap to their
+nearest routable edge, influence propagates over **walking-network distance** (never plain
+`ST_DWithin`), weighted by severity / weapon / motorcycle / recency / time bucket / weekday type,
+normalized per context with a p95 clamp. 9 contexts: 4 buckets × {weekday, weekend} + `all_day/all`.
+Time-bucket boundaries are mirrored in Go (`internal/saferoutes/service.go`) — change both or
+neither. A model only activates after passing the temporal backtest gate (train ≤ 2022 vs 2023:
+PAI@Top5 ≥ 3, Recall@Top10 ≥ 0.30, TopDecileLift ≥ 3).
+
+```bash
+python -m etl.risk_network_kde.cli snap-crimes        --graph-version caba_walking_graph_v1 --max-distance-meters 80
+python -m etl.risk_network_kde.cli build-neighborhoods --graph-version caba_walking_graph_v1 --bandwidth-meters 350
+python -m etl.risk_network_kde.cli compute-scores      --model network_temporal_edge_risk_v1_eval_2022 --train-until 2022-12-31
+python -m etl.risk_network_kde.cli evaluate            --model network_temporal_edge_risk_v1_eval_2022 --test-from 2023-01-01 --test-to 2023-12-31
+python -m etl.risk_network_kde.cli evaluate-routes     --model network_temporal_edge_risk_v1_eval_2022 --test-from 2023-01-01 --test-to 2023-12-31
+python -m etl.risk_network_kde.cli calibrate ...       # only if the gate fails
+python -m etl.risk_network_kde.cli finalize            --base-model network_temporal_edge_risk_v1_eval_2022 --final-model network_temporal_edge_risk_v1 --train-until latest --activate
+```
+
+The Go API never computes risk: `/api/v1/routes/safe` reads `edge_risk_scores` /
+`edge_risk_score_components` for the active `risk_model_versions` row and costs edges as
+`length_meters * (1 + safety_multiplier * risk_score)` (profiles in `route_profiles`). Product
+language: always "estimated historical exposure", never safety guarantees.
+
 ## Completed milestones
 
 | # | Spec | Status |
@@ -143,12 +183,14 @@ Check the result with `GET /api/v1/roadgraph/stats` (`routable_edges` / `exclude
 | 001 | Initial data pipeline (ETL) | done |
 | 002 | Go crimes API + MongoDB geospatial query (since migrated to PostGIS) | done |
 | — | Road graph + edge-risk foundation (OSM import, schema, `/roadgraph/stats`) | done |
+| — | Walkable graph routing (`GET /api/v1/roadgraph/route`, pgr_dijkstra) | done |
+| — | Network Temporal KDE risk scoring + `GET /api/v1/routes/safe` | done |
 
 ## Not yet implemented
 
-- Safe route calculation / risk-adjusted routing (Dijkstra / A* / pgRouting over the graph)
-- Edge risk scoring worker (populating `edge_risk_scores`)
-- `/safe-routes` endpoint
+- ML risk models (LightGBM/XGBoost) — the schema is ready (new `risk_model_versions` rows)
+- User avoid-points / community reports
+- Redis route cache (key shape documented in the safe-route-scoring design)
 - Frontend
 - Authentication
 - Aggregated statistics

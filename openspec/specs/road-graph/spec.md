@@ -3,12 +3,11 @@
 ## Purpose
 
 Provide the foundation for CABA safe-walking routing: a clean, queryable walkable road graph
-(`road_nodes` / `road_edges`) built offline from OpenStreetMap, plus the risk schema
-(`risk_model_versions` / `edge_risk_scores`) that a future scoring milestone will populate, and a
-read-only status endpoint to verify the import. Routing and scoring over the graph are **future**
-capabilities and are intentionally not part of this capability.
+(`road_nodes` / `road_edges`) built offline from OpenStreetMap, and a read-only status endpoint to
+verify the import. Risk storage and scoring belong to the `risk-scoring` capability; routing over
+the graph belongs to `graph-routing` (plain walk routes) and `safe-routes` (risk-weighted).
 
-> Data access: the walkable graph and risk tables live in **PostgreSQL + PostGIS + pgRouting**. The
+> Data access: the walkable graph lives in **PostgreSQL + PostGIS + pgRouting**. The
 > OSM `.pbf` and the raw `osm_*` tables produced by `osm2pgrouting` are offline build inputs — the Go
 > API queries only `road_nodes` / `road_edges` via pgx (`internal/roadgraph`).
 
@@ -35,48 +34,6 @@ Risk attaches to edges, not nodes.
 
 - GIVEN a row in `road_edges`
 - THEN its `from_node_id` and `to_node_id` reference existing `road_nodes(id)` rows via foreign keys
-
-### Requirement: Risk model versioning
-
-The system SHALL persist named, versioned risk models in `risk_model_versions`, each with a unique
-`name`, a `status` constrained to `draft` / `active` / `archived`, a JSONB `parameters` object, and
-timestamps. A first model SHALL be seeded as `active`.
-
-#### Scenario: Status is constrained
-
-- WHEN a `risk_model_versions` row is inserted with a `status` outside `{draft, active, archived}`
-- THEN the insert is rejected by a check constraint
-
-#### Scenario: Seed model is active
-
-- WHEN the migrations are applied
-- THEN a model named `v1_crime_density_distance_decay` exists with `status = 'active'`
-- AND its `parameters` include `crime_search_radius_meters`, `risk_sensitivity_default`, and
-  `walking_speed_meters_per_second`
-
-### Requirement: Per-edge risk score storage
-
-The system SHALL store per-edge risk in `edge_risk_scores`, keyed by `(edge_id, model_version_id)`,
-with a `risk_score` constrained to `[0, 1]`, a non-negative `crime_count`, a `weighted_crime_score`,
-and a `computed_at`. Rows SHALL cascade-delete with their edge or model version. This capability only
-creates the table; it is populated by a future scoring milestone.
-
-#### Scenario: Score range is constrained
-
-- WHEN an `edge_risk_scores` row is inserted with `risk_score` outside `[0, 1]` or a negative
-  `crime_count`
-- THEN the insert is rejected by a check constraint
-
-#### Scenario: Scores cascade with their edge
-
-- GIVEN an edge with risk scores
-- WHEN the `road_edges` row is deleted
-- THEN its `edge_risk_scores` rows are removed
-
-#### Scenario: No scores before the scoring milestone
-
-- WHEN the graph has been imported but no scoring has run
-- THEN `edge_risk_scores` is empty and the graph-status `risk_scored_edges` count is `0`
 
 ### Requirement: Offline OSM import and normalization
 
@@ -112,7 +69,10 @@ idempotent.
 a nullable `excluded_reason`, and a nullable `quality_checked_at`. A `routable_road_edges` view SHALL
 expose exactly the edges that are both `is_walkable` and `is_routable`. Quality classification SHALL
 mark edges (never delete them), so the layer is auditable and reversible. `is_walkable` denotes
-import provenance; `is_routable` denotes fitness for routing.
+import provenance; `is_routable` denotes fitness for routing. After the per-edge rules, edges
+outside the **largest connected component** of the surviving routable graph SHALL be marked
+non-routable (`disconnected_component`), so nearest-edge snapping can never strand a route request
+on an isolated island.
 
 #### Scenario: Quality columns and view exist
 
@@ -123,12 +83,12 @@ import provenance; `is_routable` denotes fitness for routing.
 
 #### Scenario: Cleanup marks anomalous edges non-routable without deleting
 
-- GIVEN an imported graph containing zero/negative-length, self-loop, invalid-geometry, or
-  over-5000 m edges
+- GIVEN an imported graph containing zero/negative-length, self-loop, invalid-geometry,
+  over-5000 m, or disconnected-island edges
 - WHEN the cleanup script runs
 - THEN those edges have `is_routable = false` with `excluded_reason` set to
-  `zero_or_negative_length`, `self_loop`, `invalid_geometry`, or `suspicious_long_edge_over_5000m`
-  respectively
+  `zero_or_negative_length`, `self_loop`, `invalid_geometry`, `suspicious_long_edge_over_5000m`,
+  or `disconnected_component` respectively
 - AND no `road_edges` row is deleted (the total edge count is unchanged)
 
 #### Scenario: Cleanup is idempotent
@@ -137,6 +97,13 @@ import provenance; `is_routable` denotes fitness for routing.
 - WHEN it runs again
 - THEN the set of routable and excluded edges is identical to the previous run (it resets quality
   state before re-applying the rules)
+
+#### Scenario: Routable graph is a single connected component
+
+- GIVEN the cleanup script has run
+- WHEN `pgr_connectedComponents` is computed over `routable_road_edges`
+- THEN exactly one component remains
+- AND any two routable edges are mutually reachable
 
 ### Requirement: Graph status endpoint
 
