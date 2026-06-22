@@ -38,16 +38,14 @@ internal/
     repository_integration_test.go # //go:build integration — live PostGIS test
   roadgraph/                      # walkable road graph status (foundation)
     model.go                      # GraphStats
-    repository.go                 # Repository interface
-    postgres_repository.go        # PostgresRepository (counts + ST_Extent bbox)
+    repository.go                 # Repository interface + PostgresRepository (counts + ST_Extent bbox + walk route)
     service.go                    # status orchestration
     handler.go                    # GET /api/v1/roadgraph/stats
     service_test.go / handler_test.go
-    postgres_repository_integration_test.go # //go:build integration
+    repository_integration_test.go # //go:build integration
   saferoutes/                     # GET /api/v1/routes/safe — risk-weighted walking routes
     model.go / dto.go / errors.go # route alternatives, metrics, sentinel errors
-    repository.go                 # Repository interface (routing-engine seam)
-    postgres_repository.go        # pgr_dijkstra / pgr_ksp with risk-weighted cost
+    repository.go                 # Repository interface (routing-engine seam) + PostgresRepository (pgr_dijkstra / pgr_ksp, risk-weighted cost)
     risk_aggregation.go           # route risk = 0.75·weighted_avg + 0.25·max, levels, comparisons
     service.go                    # validation, time-bucket/weekday resolution, profile orchestration
     handler.go                    # parsing + error mapping (400/404/503/500)
@@ -260,4 +258,4 @@ Every new domain must follow the existing layered structure — no shortcuts:
 handler → service → repository interface → concrete repository (Mongo / Postgres) → datastore
 ```
 
-New domains live under `internal/<domain>/` with the same file split: `model.go`, `dto.go`, `repository.go`, `<store>_repository.go`, `service.go`, `handler.go`, plus `*_test.go` files. Register routes in `internal/app/routes.go`.
+New domains live under `internal/<domain>/` with the same file split: `model.go`, `dto.go`, `repository.go` (the `Repository` interface and its concrete `PostgresRepository` live together in this one file), `service.go`, `handler.go`, plus `*_test.go` files. Register routes in `internal/app/routes.go`.
