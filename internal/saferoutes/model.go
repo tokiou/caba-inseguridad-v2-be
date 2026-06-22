@@ -50,7 +50,8 @@ type CandidateRouteRequest struct {
 }
 
 // PathEdge is one traversed edge with its risk and precomputed crime components
-// for the resolved context.
+// for the resolved context. PointLat/PointLng are the edge midpoint, used to
+// place each segment on a map.
 type PathEdge struct {
 	EdgeID               int64   `json:"edge_id"`
 	LengthMeters         float64 `json:"length_meters"`
@@ -63,6 +64,16 @@ type PathEdge struct {
 	ArmedCount           int64   `json:"armed_count"`
 	MotorcycleCount      int64   `json:"motorcycle_count"`
 	SameBucketCrimeCount int64   `json:"same_bucket_crime_count"`
+	PointLat             float64 `json:"point_lat"`
+	PointLng             float64 `json:"point_lng"`
+}
+
+// EdgeBucketRisk is one (edge, time_bucket) risk score, used to build the
+// per-route time-of-day risk profile.
+type EdgeBucketRisk struct {
+	EdgeID     int64
+	TimeBucket string
+	RiskScore  float64
 }
 
 // RoutePath is a raw path as returned by the routing engine, before metric
@@ -91,6 +102,48 @@ type CrimeMetrics struct {
 	SameBucketCrimeCount int64 `json:"same_bucket_crime_count"`
 }
 
+// RiskiestSegment is the single highest-risk edge on a route — the block that
+// drives the route's max_edge_risk component. Metric-only; the client composes
+// any prose ("riskier because of this block").
+type RiskiestSegment struct {
+	RiskScore       float64 `json:"risk_score"`
+	RiskLevel       string  `json:"risk_level"`
+	LengthMeters    float64 `json:"length_meters"`
+	Point           LatLng  `json:"point"`
+	CrimeCount      int64   `json:"crime_count"`
+	RobberyCount    int64   `json:"robbery_count"`
+	ArmedCount      int64   `json:"armed_count"`
+	TheftCount      int64   `json:"theft_count"`
+	ThreatsCount    int64   `json:"threats_count"`
+	MotorcycleCount int64   `json:"motorcycle_count"`
+}
+
+// RouteSegment is the minimal per-edge view, in path order: enough to compare
+// two routes block by block. Crime detail is intentionally limited to the
+// robbery count.
+type RouteSegment struct {
+	RiskScore    float64 `json:"risk_score"`
+	RobberyCount int64   `json:"robbery_count"`
+	LengthMeters float64 `json:"length_meters"`
+	Point        LatLng  `json:"point"`
+}
+
+// BucketRisk is a route's aggregated risk for one time bucket.
+type BucketRisk struct {
+	RiskScore float64 `json:"risk_score"`
+	RiskLevel string  `json:"risk_level"`
+}
+
+// TimeOfDayRisk is the same route's risk across the four time buckets for the
+// resolved weekday type, plus the worst (peak) bucket. Bucket granularity only.
+type TimeOfDayRisk struct {
+	Morning    BucketRisk `json:"morning"`
+	Afternoon  BucketRisk `json:"afternoon"`
+	Evening    BucketRisk `json:"evening"`
+	Night      BucketRisk `json:"night"`
+	PeakBucket string     `json:"peak_bucket"`
+}
+
 // SafeRoute is one fully aggregated route alternative.
 type SafeRoute struct {
 	Kind                          string            `json:"kind"`
@@ -106,5 +159,10 @@ type SafeRoute struct {
 	MaxEdgeRisk                   float64           `json:"max_edge_risk"`
 	AvgEdgeRisk                   float64           `json:"avg_edge_risk"`
 	CrimeMetrics                  CrimeMetrics      `json:"crime_metrics"`
+	RiskiestSegment               *RiskiestSegment  `json:"riskiest_segment,omitempty"`
+	Segments                      []RouteSegment    `json:"segments,omitempty"`
+	DominantFactor                string            `json:"dominant_factor"`
+	ArmedSharePercent             float64           `json:"armed_share_percent"`
+	TimeOfDayRisk                 *TimeOfDayRisk    `json:"time_of_day_risk,omitempty"`
 	Geometry                      GeoJSONLineString `json:"geometry"`
 }

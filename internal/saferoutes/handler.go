@@ -29,8 +29,6 @@ func (h *Handler) Register(r chi.Router) {
 	r.Get("/routes/safe", h.GetSafeRoutes)
 }
 
-// GetSafeRoutes returns the fastest / balanced / safest / least-safe-candidate
-// walking routes between two CABA points for a given moment.
 func (h *Handler) GetSafeRoutes(w http.ResponseWriter, r *http.Request) {
 	query, err := parseSafeRoutesQuery(r)
 	if err != nil {

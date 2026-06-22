@@ -18,8 +18,11 @@ type stubRepository struct {
 	routeErr      error
 	candidates    []RoutePath
 	candidatesErr error
+	bucketRisk    []EdgeBucketRisk
+	bucketRiskErr error
 
 	routeRequests []RouteRequest
+	bucketEdgeIDs [][]int64
 }
 
 func (s *stubRepository) ActiveModel(context.Context) (ModelVersion, error) {
@@ -44,6 +47,11 @@ func (s *stubRepository) FindRoute(_ context.Context, req RouteRequest) (RoutePa
 
 func (s *stubRepository) FindCandidateRoutes(context.Context, CandidateRouteRequest) ([]RoutePath, error) {
 	return s.candidates, s.candidatesErr
+}
+
+func (s *stubRepository) RouteRiskByBucket(_ context.Context, edgeIDs []int64, _ int64, _ string) ([]EdgeBucketRisk, error) {
+	s.bucketEdgeIDs = append(s.bucketEdgeIDs, edgeIDs)
+	return s.bucketRisk, s.bucketRiskErr
 }
 
 func defaultProfiles() map[string]RouteProfile {
@@ -121,6 +129,43 @@ func TestSafeRoutesHappyPath(t *testing.T) {
 		if repo.routeRequests[i].SafetyMultiplier != want {
 			t.Fatalf("request %d multiplier = %v, want %v", i, repo.routeRequests[i].SafetyMultiplier, want)
 		}
+	}
+}
+
+func TestSafeRoutesTimeOfDayMetadata(t *testing.T) {
+	repo := workingStub()
+	// Edge 1 is the only edge in every stub path; night is the worst bucket.
+	repo.bucketRisk = []EdgeBucketRisk{
+		{EdgeID: 1, TimeBucket: "morning", RiskScore: 0.1},
+		{EdgeID: 1, TimeBucket: "afternoon", RiskScore: 0.2},
+		{EdgeID: 1, TimeBucket: "evening", RiskScore: 0.5},
+		{EdgeID: 1, TimeBucket: "night", RiskScore: 0.9},
+	}
+
+	response, err := NewService(repo).SafeRoutes(context.Background(), validQuery())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, route := range response.Routes {
+		if route.TimeOfDayRisk == nil {
+			t.Fatalf("route %q missing time_of_day_risk", route.Kind)
+		}
+		if route.TimeOfDayRisk.PeakBucket != "night" {
+			t.Errorf("route %q peak bucket = %q, want night", route.Kind, route.TimeOfDayRisk.PeakBucket)
+		}
+		// Single-edge path → night score = 0.75*0.9 + 0.25*0.9 = 0.9 (high).
+		if route.TimeOfDayRisk.Night.RiskScore != 0.9 {
+			t.Errorf("route %q night score = %v, want 0.9", route.Kind, route.TimeOfDayRisk.Night.RiskScore)
+		}
+		if route.TimeOfDayRisk.Night.RiskLevel != "high" {
+			t.Errorf("route %q night level = %q, want high", route.Kind, route.TimeOfDayRisk.Night.RiskLevel)
+		}
+	}
+
+	// Each of the four returned routes triggers exactly one bucket lookup.
+	if len(repo.bucketEdgeIDs) != 4 {
+		t.Fatalf("bucket lookups = %d, want 4", len(repo.bucketEdgeIDs))
 	}
 }
 

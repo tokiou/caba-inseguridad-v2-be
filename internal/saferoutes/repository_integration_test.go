@@ -64,6 +64,31 @@ func TestSafeRoutesIntegration(t *testing.T) {
 		if route.Geometry.Type != "LineString" || len(route.Geometry.Coordinates) < 2 {
 			t.Fatalf("route %s has invalid geometry", route.Kind)
 		}
+
+		// Explainability metadata.
+		if route.RiskiestSegment == nil {
+			t.Fatalf("route %s missing riskiest_segment", route.Kind)
+		}
+		if route.RiskiestSegment.RiskScore != route.MaxEdgeRisk {
+			t.Fatalf("route %s riskiest risk %v != max_edge_risk %v",
+				route.Kind, route.RiskiestSegment.RiskScore, route.MaxEdgeRisk)
+		}
+		if len(route.Segments) == 0 {
+			t.Fatalf("route %s has no segments", route.Kind)
+		}
+		switch route.DominantFactor {
+		case "robbery", "theft", "threats", "none":
+		default:
+			t.Fatalf("route %s invalid dominant_factor %q", route.Kind, route.DominantFactor)
+		}
+		if route.TimeOfDayRisk == nil {
+			t.Fatalf("route %s missing time_of_day_risk", route.Kind)
+		}
+		switch route.TimeOfDayRisk.PeakBucket {
+		case "morning", "afternoon", "evening", "night":
+		default:
+			t.Fatalf("route %s invalid peak_bucket %q", route.Kind, route.TimeOfDayRisk.PeakBucket)
+		}
 	}
 
 	fastest, safest := byKind["fastest"], byKind["safest"]
@@ -77,6 +102,52 @@ func TestSafeRoutesIntegration(t *testing.T) {
 		if leastSafe.DistanceMeters > fastest.DistanceMeters*1.75 {
 			t.Fatalf("least safe candidate detour %v exceeds 1.75x fastest %v",
 				leastSafe.DistanceMeters, fastest.DistanceMeters)
+		}
+	}
+}
+
+func TestRouteRiskByBucketIntegration(t *testing.T) {
+	repo := NewRepository(integrationPool(t))
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	model, err := repo.ActiveModel(ctx)
+	if err != nil {
+		t.Fatalf("ActiveModel: %v", err)
+	}
+	snap, err := repo.SnapEndpoints(ctx, SafeRoutesQuery{
+		OriginLat: -34.58, OriginLng: -58.42, DestLat: -34.60, DestLng: -58.40,
+	})
+	if err != nil {
+		t.Fatalf("SnapEndpoints: %v", err)
+	}
+	path, err := repo.FindRoute(ctx, RouteRequest{
+		FromNodeID: snap.OriginNodeID, ToNodeID: snap.DestNodeID,
+		ModelVersionID: model.ID, TimeBucket: "night", WeekdayType: "weekday", SafetyMultiplier: 1.5,
+	})
+	if err != nil {
+		t.Fatalf("FindRoute: %v", err)
+	}
+
+	edgeIDs := make([]int64, len(path.Edges))
+	for i, e := range path.Edges {
+		edgeIDs[i] = e.EdgeID
+	}
+	rows, err := repo.RouteRiskByBucket(ctx, edgeIDs, model.ID, "weekday")
+	if err != nil {
+		t.Fatalf("RouteRiskByBucket: %v", err)
+	}
+	if len(rows) == 0 {
+		t.Fatal("expected per-bucket risk rows for the route's edges")
+	}
+	for _, row := range rows {
+		switch row.TimeBucket {
+		case "morning", "afternoon", "evening", "night":
+		default:
+			t.Fatalf("unexpected time_bucket %q (must be one of the four)", row.TimeBucket)
+		}
+		if row.RiskScore < 0 || row.RiskScore > 1 {
+			t.Fatalf("risk out of [0,1]: %v", row.RiskScore)
 		}
 	}
 }

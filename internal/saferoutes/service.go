@@ -86,6 +86,13 @@ func (s *Service) SafeRoutes(ctx context.Context, query SafeRoutesQuery) (SafeRo
 			fastest = route
 		}
 		setComparisons(&route, fastest)
+
+		tod, err := s.timeOfDayRisk(ctx, path, model, weekdayType)
+		if err != nil {
+			return SafeRoutesResponse{}, err
+		}
+		route.TimeOfDayRisk = tod
+
 		routes = append(routes, route)
 	}
 
@@ -127,8 +134,9 @@ func (s *Service) leastSafeCandidate(
 	}
 
 	var (
-		worst SafeRoute
-		found bool
+		worst     SafeRoute
+		worstPath RoutePath
+		found     bool
 	)
 	for _, path := range paths {
 		route := aggregateRoute("least_safe_candidate", path, model)
@@ -138,14 +146,42 @@ func (s *Service) leastSafeCandidate(
 		}
 		if !found || route.RiskScore > worst.RiskScore {
 			worst = route
+			worstPath = path
 			found = true
 		}
 	}
 	if !found {
 		return SafeRoute{}, false, nil
 	}
+
+	tod, err := s.timeOfDayRisk(ctx, worstPath, model, base.WeekdayType)
+	if err != nil {
+		return SafeRoute{}, false, err
+	}
+	worst.TimeOfDayRisk = tod
+
 	setComparisons(&worst, fastest)
 	return worst, true, nil
+}
+
+// timeOfDayRisk reads the path's per-edge risk across the four time buckets for
+// the resolved weekday type and folds it into a per-route TimeOfDayRisk. Returns
+// nil for an empty path.
+func (s *Service) timeOfDayRisk(
+	ctx context.Context, path RoutePath, model ModelVersion, weekdayType string,
+) (*TimeOfDayRisk, error) {
+	if len(path.Edges) == 0 {
+		return nil, nil
+	}
+	edgeIDs := make([]int64, len(path.Edges))
+	for i, e := range path.Edges {
+		edgeIDs[i] = e.EdgeID
+	}
+	perBucket, err := s.repository.RouteRiskByBucket(ctx, edgeIDs, model.ID, weekdayType)
+	if err != nil {
+		return nil, err
+	}
+	return aggregateBucketRisk(path.Edges, perBucket, model), nil
 }
 
 // isValidCABACoordinates bounds inputs to the CABA bounding box (matches the
