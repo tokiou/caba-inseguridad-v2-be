@@ -16,8 +16,8 @@ minimizes exposure to crime hotspots. Crime data comes from open CABA datasets.
   index) and the walkable road graph. Both the ETL load path and the Go read path
   (`GET /api/v1/crimes/nearby`) run on Postgres. MongoDB has been removed from the Go app. The DB
   image is `pgrouting/pgrouting:16-3.4-3.6.1` (PostGIS 3.4 + pgRouting 3.6 on PG16), host port 5434.
-- **pgx (jackc/pgx v5)** — Postgres driver + connection pool. **sqlc** will be added for relational
-  CRUD (future users / saved-routes).
+- **pgx (jackc/pgx v5)** — Postgres driver + connection pool. **sqlc** generates relational CRUD,
+  introduced with the `auth` capability (`internal/auth/db`, config in `sqlc.yaml`).
 - **OpenStreetMap + osm2pgrouting** — offline source for the CABA walkable graph (`scripts/osm/`).
   The `.pbf` and the raw `osm_*` tables are build inputs; the Go API only queries the normalized
   `road_nodes` / `road_edges`.
@@ -35,6 +35,9 @@ minimizes exposure to crime hotspots. Crime data comes from open CABA datasets.
   (`edge_risk_scores` / `edge_risk_score_components`), temporal backtest + activation gate.
 - `safe-routes` — `GET /api/v1/routes/safe` (`internal/saferoutes/`): fastest / balanced / safest /
   least_safe_candidate over the local graph via pgRouting, costed with the active model's scores.
+  Requires authentication.
+- `auth` — `/api/v1/auth/*` (`internal/auth/`): email/password accounts, JWT access tokens, rotating
+  hashed refresh tokens, and the middleware gating `/routes/safe`. Relational CRUD via sqlc.
 - `logging` — structured per-request logging, request-ID correlation, panic recovery.
 
 ## Architecture rules (do not skip layers)
