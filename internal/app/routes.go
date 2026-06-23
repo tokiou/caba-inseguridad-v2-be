@@ -15,17 +15,22 @@ type Registrar interface {
 	Register(r chi.Router)
 }
 
-func NewRouter(log *slog.Logger, registrars ...Registrar) http.Handler {
+// NewRouter builds the HTTP handler. Public registrars mount directly under
+// /api/v1; protected registrars mount inside a group guarded by authMiddleware.
+func NewRouter(log *slog.Logger, authMiddleware func(http.Handler) http.Handler, public, protected []Registrar) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(middleware.RequestID)
 
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"http://localhost:8081"},
-		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
-		ExposedHeaders:   []string{"Link"},
-		AllowCredentials: false,
+		AllowedOrigins: []string{"http://localhost:8081"},
+		AllowedMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowedHeaders: []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
+		ExposedHeaders: []string{"Link"},
+		// Required so the browser sends the HttpOnly refresh cookie on
+		// login/refresh/logout. With credentials, AllowedOrigins must stay a
+		// concrete origin (no "*" wildcard).
+		AllowCredentials: true,
 		MaxAge:           300,
 	}))
 
@@ -50,9 +55,16 @@ func NewRouter(log *slog.Logger, registrars ...Registrar) http.Handler {
 	))
 
 	r.Route("/api/v1", func(r chi.Router) {
-		for _, reg := range registrars {
+		for _, reg := range public {
 			reg.Register(r)
 		}
+
+		r.Group(func(r chi.Router) {
+			r.Use(authMiddleware)
+			for _, reg := range protected {
+				reg.Register(r)
+			}
+		})
 	})
 
 	return r
