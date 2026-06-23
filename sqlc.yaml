@@ -1,0 +1,24 @@
+# sqlc owns relational CRUD (auth). PostGIS / geospatial queries stay on raw pgx
+# because sqlc's analyzer cannot parse PostGIS functions — so the schema here points
+# only at the auth migration, never the geospatial ones.
+version: "2"
+sql:
+  - engine: "postgresql"
+    schema: "migrations/000011_create_auth_tables.up.sql"
+    queries: "internal/auth/db/queries"
+    gen:
+      go:
+        package: "authdb"
+        out: "internal/auth/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: false
+        emit_interface: true
+        emit_empty_slices: true
+        emit_pointers_for_null_types: true
+        overrides:
+          - db_type: "uuid"
+            go_type: "github.com/google/uuid.UUID"
+          - db_type: "timestamptz"
+            go_type: "time.Time"
+          - db_type: "inet"
+            go_type: "string"

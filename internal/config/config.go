@@ -2,6 +2,8 @@ package config
 
 import (
 	"os"
+	"strconv"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -14,6 +16,14 @@ type Config struct {
 	ORSBaseURL  string
 	LogLevel    string
 	LogFormat   string
+
+	// Auth
+	JWTSecret         string
+	AccessTokenTTL    time.Duration
+	RefreshTokenTTL   time.Duration
+	RefreshCookieName string
+	CookieSecure      bool
+	CookieSameSite    string
 }
 
 func Load() Config {
@@ -27,7 +37,20 @@ func Load() Config {
 		ORSBaseURL:  getEnv("ORS_BASE_URL", "https://api.openrouteservice.org"),
 		LogLevel:    getEnv("LOG_LEVEL", "info"),
 		LogFormat:   getEnv("LOG_FORMAT", "json"),
+
+		JWTSecret:         getEnv("JWT_SECRET", ""),
+		AccessTokenTTL:    time.Duration(getEnvInt("ACCESS_TOKEN_TTL_MINUTES", 15)) * time.Minute,
+		RefreshTokenTTL:   time.Duration(getEnvInt("REFRESH_TOKEN_TTL_DAYS", 7)) * 24 * time.Hour,
+		RefreshCookieName: getEnv("REFRESH_COOKIE_NAME", "refresh_token"),
+		CookieSecure:      getEnvBool("COOKIE_SECURE", false),
+		CookieSameSite:    getEnv("COOKIE_SAMESITE", "lax"),
 	}
+}
+
+// IsDevelopment reports whether the app runs in the development environment,
+// where insecure defaults (e.g. an empty JWT secret) are tolerated.
+func (c Config) IsDevelopment() bool {
+	return c.AppEnv == "development"
 }
 
 func getEnv(key string, fallback string) string {
@@ -37,4 +60,32 @@ func getEnv(key string, fallback string) string {
 	}
 
 	return value
+}
+
+func getEnvInt(key string, fallback int) int {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+
+	return parsed
+}
+
+func getEnvBool(key string, fallback bool) bool {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return fallback
+	}
+
+	return parsed
 }

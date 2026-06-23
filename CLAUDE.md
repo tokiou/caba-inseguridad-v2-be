@@ -9,13 +9,15 @@ Backend for **CABA Rutas Seguras**: given two points in Buenos Aires (CABA), ret
 - **Go 1.25** — HTTP API (`github.com/tokiou/caba-inseguridad-routes-go`)
 - **Python 3** — ETL pipeline under `etl/python/`
 - **PostgreSQL + PostGIS** — geospatial crime data (`geom GEOMETRY(Point,4326)`, GiST index)
-- **pgx (jackc/pgx v5)** — Postgres driver + pool; **sqlc** to be added for relational CRUD
+- **pgx (jackc/pgx v5)** — Postgres driver + pool; **sqlc** generates the relational CRUD (auth)
 - **chi** — HTTP router
+- **golang-jwt/v5** + **bcrypt** — access-token signing + password hashing (auth)
 - **godotenv** — env loading
 
 > **Data access rule:** **pgx** owns all PostGIS / geospatial queries (raw SQL); **sqlc** owns
-> relational CRUD (introduced with the future users / saved-routes capability). sqlc's analyzer does
-> not understand PostGIS functions, so geospatial queries stay on pgx.
+> relational CRUD (introduced with the auth capability — `internal/auth/`). sqlc's analyzer does
+> not understand PostGIS functions, so its schema points only at the auth migration and geospatial
+> queries stay on pgx. Regenerate with `go generate ./internal/auth/...` (config: `sqlc.yaml`).
 
 ## Repository layout
 
@@ -50,7 +52,18 @@ internal/
     service.go                    # validation, time-bucket/weekday resolution, profile orchestration
     handler.go                    # parsing + error mapping (400/404/503/500)
     *_test.go                     # unit + //go:build integration tests
+  auth/                           # /api/v1/auth/* — accounts + JWT auth, gates /routes/safe
+    model.go / dto.go / errors.go # User/session models, request/response DTOs, sentinel errors
+    token.go                      # JWT mint/verify (HS256) + opaque refresh + sha256 hashing
+    repository.go                 # Repository interface + PostgresRepository (wraps sqlc authdb)
+    service.go                    # register/login/refresh/logout/authenticate, bcrypt, rotation
+    handler.go                    # 5 endpoints + refresh cookie + error mapping
+    middleware.go                 # bearer-token middleware + WithUser/UserFromContext
+    gen.go                        # //go:generate sqlc directive
+    db/                           # sqlc-generated package authdb (queries/ holds auth.sql)
+    *_test.go                     # unit (token/service/handler/middleware) + integration
   httpx/response.go               # shared JSON helpers
+sqlc.yaml                         # sqlc config (auth relational CRUD only)
 scripts/osm/                      # offline OSM → road graph import (not queried by the API)
   download_caba_osm.sh            # fetch CABA .pbf into data/osm/
   import_osm_graph.sh             # osm2pgrouting (foot profile) → osm_ways / osm_ways_vertices_pgr
@@ -70,7 +83,7 @@ etl/risk_network_kde/             # offline Network Temporal KDE risk pipeline (
   snap_crimes.py / graph_loader.py / build_neighborhoods.py
   compute_scores.py / evaluate.py / evaluate_routes.py / calibrate.py / finalize.py
   requirements.txt
-migrations/                       # SQL migrations (000001_enable_postgis … 000010_create_route_profiles)
+migrations/                       # SQL migrations (000001_enable_postgis … 000011_create_auth_tables)
 data/
   raw/                            # source XLSX files (not committed)
   processed/                      # generated JSONL/JSON artifacts
@@ -101,6 +114,14 @@ HTTP_PORT=8080
 DATABASE_URL=postgres://postgres:postgres@localhost:5434/caba_routes?sslmode=disable
 LOG_LEVEL=info          # debug | info | warn | error
 LOG_FORMAT=json         # json (prod) | text (colored dev console)
+
+# Auth
+JWT_SECRET=change_me            # required outside development (refuses to boot if empty/default)
+ACCESS_TOKEN_TTL_MINUTES=15
+REFRESH_TOKEN_TTL_DAYS=7
+REFRESH_COOKIE_NAME=refresh_token
+COOKIE_SECURE=false             # true in production (HTTPS)
+COOKIE_SAMESITE=lax             # lax | strict | none
 ```
 
 The Postgres container (`pgrouting/pgrouting:16-3.4-3.6.1` — PostGIS 3.4 + pgRouting 3.6 on PG16) maps
@@ -183,22 +204,27 @@ language: always "estimated historical exposure", never safety guarantees.
 | — | Road graph + edge-risk foundation (OSM import, schema, `/roadgraph/stats`) | done |
 | — | Walkable graph routing (`GET /api/v1/roadgraph/route`, pgr_dijkstra) | done |
 | — | Network Temporal KDE risk scoring + `GET /api/v1/routes/safe` | done |
+| — | Route explainability metadata on `/routes/safe` | done |
+| — | User accounts + JWT auth (`/api/v1/auth/*`), `/routes/safe` gated | done |
 
 ## Not yet implemented
 
 - ML risk models (LightGBM/XGBoost) — the schema is ready (new `risk_model_versions` rows)
-- User avoid-points / community reports
+- User avoid-points / community reports / saved routes
+- Authorization roles (current auth only distinguishes a valid, active user)
+- Rate limiting on `/auth/login` (the `login_attempts` table is in place for it)
+- Refresh-token reuse-detection lockout (rotation + `replaced_by` recorded; family revocation deferred)
 - Redis route cache (key shape documented in the safe-route-scoring design)
 - Frontend
-- Authentication
 - Aggregated statistics
 
 ## Git & version control
 
-> **RULE — never push without an explicit instruction.** Do **not** run `git push` (or otherwise
-> publish changes to the remote) unless the user explicitly asks for it in that message. Approval to
-> push once does not carry over to later changes — each push needs its own go-ahead. Committing
-> locally is fine when finishing a unit of work, but pushing is always the user's call.
+> **RULE — never commit or push without an explicit instruction.** Do **not** run `git commit`,
+> `git push`, or otherwise record/publish changes unless the user explicitly asks for it in *that*
+> message. Leave finished work as changes in the working tree so the user can review it from their
+> Git tooling; **they** decide when to commit and when to push. Approval to commit or push once does
+> **not** carry over to later changes — each one needs its own go-ahead.
 
 ## Development workflow
 
