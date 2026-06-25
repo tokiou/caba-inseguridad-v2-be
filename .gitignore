@@ -10,3 +10,12 @@ __pycache__/
 .opencode/
 opencode.json
 .vscode/
+
+# Benchmark build artifacts + noisy per-run server logs (the k6 summaries and
+# server-stat snapshots under bench/results/ ARE committed for regression tracking).
+bench/bin/
+bench/results/**/api.log
+
+# Go test coverage output
+*.out
+coverage.*

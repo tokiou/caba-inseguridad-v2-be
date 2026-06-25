@@ -18,6 +18,9 @@ minimizes exposure to crime hotspots. Crime data comes from open CABA datasets.
   image is `pgrouting/pgrouting:16-3.4-3.6.1` (PostGIS 3.4 + pgRouting 3.6 on PG16), host port 5434.
 - **pgx (jackc/pgx v5)** — Postgres driver + connection pool. **sqlc** generates relational CRUD,
   introduced with the `auth` capability (`internal/auth/db`, config in `sqlc.yaml`).
+- **Redis (go-redis v9) + ulule/limiter v3** — distributed per-endpoint rate limiting and the
+  `/routes/safe` route cache, both opt-in via env flags (`internal/ratelimit`,
+  `internal/platform/redis`, `internal/saferoutes/cache*.go`). `redis:7-alpine` in docker-compose.
 - **OpenStreetMap + osm2pgrouting** — offline source for the CABA walkable graph (`scripts/osm/`).
   The `.pbf` and the raw `osm_*` tables are build inputs; the Go API only queries the normalized
   `road_nodes` / `road_edges`.
@@ -38,6 +41,16 @@ minimizes exposure to crime hotspots. Crime data comes from open CABA datasets.
   Requires authentication.
 - `auth` — `/api/v1/auth/*` (`internal/auth/`): email/password accounts, JWT access tokens, rotating
   hashed refresh tokens, and the middleware gating `/routes/safe`. Relational CRUD via sqlc.
+- `rate-limiting` — distributed per-endpoint rate limiting (`internal/ratelimit/`, ulule/limiter +
+  Redis), by client IP, applied as chi middleware before the handler; `429` on exceed. Opt-in via
+  `RATE_LIMIT_ENABLED`.
+- `route-cache` — Redis cache for `/routes/safe` behind a `RouteCache` seam (Redis / no-op), opt-in
+  via `ROUTE_CACHE_ENABLED`.
+- `redis-runtime` — Redis client lifecycle (`internal/platform/redis/`), feature-flag validation
+  (both features require `REDIS_ENABLED`), and the benchmark-mode matrix.
+- `observability` — `GET /api/v1/debug/stats` (`internal/observability/`): pgxpool + route-cache +
+  runtime stats for the benchmark harness (`bench/`), gated by `METRICS_ENABLED`, loopback-only;
+  plus the cache hit/miss counters and the `X-Cache` header on `/routes/safe`.
 - `logging` — structured per-request logging, request-ID correlation, panic recovery.
 
 ## Architecture rules (do not skip layers)

@@ -79,7 +79,7 @@ func TestHandlerGetWalkRoute(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			handler := NewHandler(tt.svc, discardLogger())
+			handler := NewHandler(tt.svc, passthrough, discardLogger())
 			req := httptest.NewRequest(http.MethodGet, tt.url, nil)
 			rec := httptest.NewRecorder()
 

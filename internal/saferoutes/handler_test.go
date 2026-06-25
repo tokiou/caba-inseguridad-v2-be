@@ -11,6 +11,8 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+func passthrough(next http.Handler) http.Handler { return next }
+
 type stubService struct {
 	response SafeRoutesResponse
 	err      error
@@ -22,7 +24,7 @@ func (s *stubService) SafeRoutes(context.Context, SafeRoutesQuery) (SafeRoutesRe
 
 func newTestServer(svc service) *httptest.Server {
 	r := chi.NewRouter()
-	NewHandler(svc, slog.New(slog.DiscardHandler)).Register(r)
+	NewHandler(svc, passthrough, slog.New(slog.DiscardHandler)).Register(r)
 	return httptest.NewServer(r)
 }
 
@@ -55,6 +57,25 @@ func TestGetSafeRoutesOK(t *testing.T) {
 	}
 	if len(body.Routes) != 4 || body.TimeBucket != "night" {
 		t.Fatalf("unexpected body: %+v", body)
+	}
+}
+
+func TestGetSafeRoutesXCacheHeader(t *testing.T) {
+	for _, c := range []struct {
+		fromCache bool
+		want      string
+	}{{true, "hit"}, {false, "miss"}} {
+		svc := &stubService{response: SafeRoutesResponse{FromCache: c.fromCache, Routes: []SafeRoute{}}}
+		server := newTestServer(svc)
+		resp, err := http.Get(server.URL + "/routes/safe?" + validParams)
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		resp.Body.Close()
+		server.Close()
+		if got := resp.Header.Get("X-Cache"); got != c.want {
+			t.Errorf("FromCache=%v: X-Cache = %q, want %q", c.fromCache, got, c.want)
+		}
 	}
 }
 

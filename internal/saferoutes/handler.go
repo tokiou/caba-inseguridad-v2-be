@@ -17,16 +17,17 @@ type service interface {
 }
 
 type Handler struct {
-	service service
-	log     *slog.Logger
+	service   service
+	rateLimit func(http.Handler) http.Handler
+	log       *slog.Logger
 }
 
-func NewHandler(svc service, log *slog.Logger) *Handler {
-	return &Handler{service: svc, log: log}
+func NewHandler(svc service, rateLimit func(http.Handler) http.Handler, log *slog.Logger) *Handler {
+	return &Handler{service: svc, rateLimit: rateLimit, log: log}
 }
 
 func (h *Handler) Register(r chi.Router) {
-	r.Get("/routes/safe", h.GetSafeRoutes)
+	r.With(h.rateLimit).Get("/routes/safe", h.GetSafeRoutes)
 }
 
 func (h *Handler) GetSafeRoutes(w http.ResponseWriter, r *http.Request) {
@@ -59,6 +60,12 @@ func (h *Handler) GetSafeRoutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Lets a load test split latency by cache outcome without server access.
+	if response.FromCache {
+		w.Header().Set("X-Cache", "hit")
+	} else {
+		w.Header().Set("X-Cache", "miss")
+	}
 	httpx.WriteJSON(w, http.StatusOK, response)
 }
 

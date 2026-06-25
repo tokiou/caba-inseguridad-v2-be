@@ -16,13 +16,15 @@ const (
 )
 
 // Service orchestrates the safe-routes flow: validate, resolve the risk
-// context, snap, route per profile, aggregate.
+// context, snap, route per profile, aggregate. A RouteCache short-circuits the
+// expensive routing work for identical requests (NoopRouteCache when disabled).
 type Service struct {
 	repository Repository
+	cache      RouteCache
 }
 
-func NewService(repository Repository) *Service {
-	return &Service{repository: repository}
+func NewService(repository Repository, cache RouteCache) *Service {
+	return &Service{repository: repository, cache: cache}
 }
 
 func (s *Service) SafeRoutes(ctx context.Context, query SafeRoutesQuery) (SafeRoutesResponse, error) {
@@ -44,6 +46,15 @@ func (s *Service) SafeRoutes(ctx context.Context, query SafeRoutesQuery) (SafeRo
 	model, err := s.repository.ActiveModel(ctx)
 	if err != nil {
 		return SafeRoutesResponse{}, err
+	}
+
+	// Cache check happens after the (cheap) model lookup and before the expensive
+	// snap + routing + aggregation. The key includes the model id, so a model
+	// change naturally bypasses stale entries. A Get error is a miss (fail-open).
+	cacheKey := routeCacheKey(query, timeBucket, weekdayType, model.ID)
+	if cached, ok, getErr := s.cache.Get(ctx, cacheKey); getErr == nil && ok {
+		cached.FromCache = true // surfaced as X-Cache: hit (never serialized/stored)
+		return *cached, nil
 	}
 
 	profiles, err := s.repository.RouteProfiles(ctx)
@@ -102,7 +113,7 @@ func (s *Service) SafeRoutes(ctx context.Context, query SafeRoutesQuery) (SafeRo
 		routes = append(routes, candidate)
 	}
 
-	return SafeRoutesResponse{
+	response := SafeRoutesResponse{
 		Origin:      LatLng{Lat: query.OriginLat, Lng: query.OriginLng},
 		Destination: LatLng{Lat: query.DestLat, Lng: query.DestLng},
 		Datetime:    at.Format(time.RFC3339),
@@ -112,7 +123,11 @@ func (s *Service) SafeRoutes(ctx context.Context, query SafeRoutesQuery) (SafeRo
 			ID: model.ID, Name: model.Name, Type: model.Type, TrainUntil: model.TrainUntil,
 		},
 		Routes: routes,
-	}, nil
+	}
+
+	// Best-effort store; a Set failure is logged inside the cache, never surfaced.
+	_ = s.cache.Set(ctx, cacheKey, response, routeCacheTTL)
+	return response, nil
 }
 
 // leastSafeCandidate picks the riskiest of K distance-ranked candidate paths

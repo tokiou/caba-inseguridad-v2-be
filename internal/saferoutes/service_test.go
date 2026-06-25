@@ -93,7 +93,7 @@ func workingStub() *stubRepository {
 
 func TestSafeRoutesHappyPath(t *testing.T) {
 	repo := workingStub()
-	response, err := NewService(repo).SafeRoutes(context.Background(), validQuery())
+	response, err := NewService(repo, NoopRouteCache{}).SafeRoutes(context.Background(), validQuery())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestSafeRoutesTimeOfDayMetadata(t *testing.T) {
 		{EdgeID: 1, TimeBucket: "night", RiskScore: 0.9},
 	}
 
-	response, err := NewService(repo).SafeRoutes(context.Background(), validQuery())
+	response, err := NewService(repo, NoopRouteCache{}).SafeRoutes(context.Background(), validQuery())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestSafeRoutesTimeOfDayMetadata(t *testing.T) {
 }
 
 func TestSafeRoutesValidation(t *testing.T) {
-	service := NewService(workingStub())
+	service := NewService(workingStub(), NoopRouteCache{})
 	cases := []struct {
 		name  string
 		query SafeRoutesQuery
@@ -189,7 +189,7 @@ func TestSafeRoutesValidation(t *testing.T) {
 func TestSafeRoutesSnapTooFar(t *testing.T) {
 	repo := workingStub()
 	repo.snap = SnapResult{OriginNodeID: 1, OriginDistance: 151, DestNodeID: 2, DestDistance: 5}
-	if _, err := NewService(repo).SafeRoutes(context.Background(), validQuery()); !errors.Is(err, ErrPointOutsideGraph) {
+	if _, err := NewService(repo, NoopRouteCache{}).SafeRoutes(context.Background(), validQuery()); !errors.Is(err, ErrPointOutsideGraph) {
 		t.Fatalf("err = %v, want ErrPointOutsideGraph", err)
 	}
 }
@@ -198,21 +198,21 @@ func TestSafeRoutesErrorPropagation(t *testing.T) {
 	t.Run("no active model", func(t *testing.T) {
 		repo := workingStub()
 		repo.modelErr = ErrNoActiveModel
-		if _, err := NewService(repo).SafeRoutes(context.Background(), validQuery()); !errors.Is(err, ErrNoActiveModel) {
+		if _, err := NewService(repo, NoopRouteCache{}).SafeRoutes(context.Background(), validQuery()); !errors.Is(err, ErrNoActiveModel) {
 			t.Fatalf("err = %v, want ErrNoActiveModel", err)
 		}
 	})
 	t.Run("no route", func(t *testing.T) {
 		repo := workingStub()
 		repo.routeErr = ErrNoRoute
-		if _, err := NewService(repo).SafeRoutes(context.Background(), validQuery()); !errors.Is(err, ErrNoRoute) {
+		if _, err := NewService(repo, NoopRouteCache{}).SafeRoutes(context.Background(), validQuery()); !errors.Is(err, ErrNoRoute) {
 			t.Fatalf("err = %v, want ErrNoRoute", err)
 		}
 	})
 	t.Run("missing profile seed", func(t *testing.T) {
 		repo := workingStub()
 		delete(repo.profiles, "balanced")
-		if _, err := NewService(repo).SafeRoutes(context.Background(), validQuery()); err == nil {
+		if _, err := NewService(repo, NoopRouteCache{}).SafeRoutes(context.Background(), validQuery()); err == nil {
 			t.Fatal("want error for missing profile seed")
 		}
 	})
@@ -221,7 +221,7 @@ func TestSafeRoutesErrorPropagation(t *testing.T) {
 func TestSafeRoutesLeastSafeOmittedWhenNoCandidates(t *testing.T) {
 	repo := workingStub()
 	repo.candidates = nil
-	response, err := NewService(repo).SafeRoutes(context.Background(), validQuery())
+	response, err := NewService(repo, NoopRouteCache{}).SafeRoutes(context.Background(), validQuery())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -38,7 +38,7 @@ func testCookieConfig() CookieConfig {
 func passthrough(next http.Handler) http.Handler { return next }
 
 func newTestRouter(svc authService) http.Handler {
-	h := NewHandler(svc, passthrough, testCookieConfig(), discardLogger())
+	h := NewHandler(svc, passthrough, passthrough, testCookieConfig(), discardLogger())
 	r := chi.NewRouter()
 	r.Route("/api/v1", func(r chi.Router) { h.Register(r) })
 	return r
@@ -151,7 +151,7 @@ func TestHandlerMe(t *testing.T) {
 			next.ServeHTTP(w, r.WithContext(WithUser(r.Context(), user)))
 		})
 	}
-	h := NewHandler(fakeAuthService{}, inject, testCookieConfig(), discardLogger())
+	h := NewHandler(fakeAuthService{}, inject, passthrough, testCookieConfig(), discardLogger())
 	r := chi.NewRouter()
 	r.Route("/api/v1", func(r chi.Router) { h.Register(r) })
 
