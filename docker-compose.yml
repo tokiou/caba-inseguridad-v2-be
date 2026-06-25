@@ -25,5 +25,24 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    # Backs distributed rate limiting and the /routes/safe route cache.
+    # appendonly keeps counters/cache across restarts. The API runs on the host
+    # (no api service here), so Redis is published on localhost:6379.
+    image: redis:7-alpine
+    container_name: safe-routes-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   postgres_data:
+  redis_data:

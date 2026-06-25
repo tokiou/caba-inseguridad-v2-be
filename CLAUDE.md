@@ -12,6 +12,8 @@ Backend for **CABA Rutas Seguras**: given two points in Buenos Aires (CABA), ret
 - **pgx (jackc/pgx v5)** — Postgres driver + pool; **sqlc** generates the relational CRUD (auth)
 - **chi** — HTTP router
 - **golang-jwt/v5** + **bcrypt** — access-token signing + password hashing (auth)
+- **Redis (go-redis v9)** + **ulule/limiter v3** — distributed per-endpoint rate limiting and the
+  `/routes/safe` route cache; both opt-in via env flags (see Rate limiting & caching)
 - **godotenv** — env loading
 
 > **Data access rule:** **pgx** owns all PostGIS / geospatial queries (raw SQL); **sqlc** owns
@@ -24,10 +26,16 @@ Backend for **CABA Rutas Seguras**: given two points in Buenos Aires (CABA), ret
 ```
 cmd/api/main.go                   # entrypoint: wires deps, starts server
 internal/
-  app/app.go                      # App struct (router + pgx pool)
+  app/app.go                      # App struct (router + pgx pool + optional Redis); flag validation + wiring
   app/routes.go                   # chi route registration
   config/config.go                # Config struct loaded from env
   platform/postgres/pool.go       # pgx connection pool + ping
+  platform/redis/client.go        # go-redis v9 client + ping (shared by ratelimit + route cache)
+  ratelimit/                      # distributed per-endpoint rate limiting (ulule/limiter + Redis)
+    policies.go                   # rate constants (10-M/5-M/30-M/60-M) + per-endpoint key prefixes
+    middleware.go                 # NewMiddleware factory + Middlewares bundle + Passthrough (disabled)
+    middleware_test.go            # allow/block + prefix isolation via miniredis
+  observability/handler.go        # GET /api/v1/debug/stats (pgxpool + cache + runtime); gated, loopback-only
   health/handler.go               # GET /api/v1/health
   crimes/
     model.go                      # Crime + GeoJSON structs
@@ -49,8 +57,10 @@ internal/
     model.go / dto.go / errors.go # route alternatives, metrics, sentinel errors
     repository.go                 # Repository interface (routing-engine seam) + PostgresRepository (pgr_dijkstra / pgr_ksp, risk-weighted cost)
     risk_aggregation.go           # route risk = 0.75·weighted_avg + 0.25·max, levels, comparisons
-    service.go                    # validation, time-bucket/weekday resolution, profile orchestration
-    handler.go                    # parsing + error mapping (400/404/503/500)
+    cache.go                      # RouteCache seam + NoopRouteCache + cache-key builder + TTL
+    cache_redis.go                # RedisRouteCache (JSON, fail-open) — checked before routing
+    service.go                    # validation, time-bucket/weekday resolution, profile orchestration, cache
+    handler.go                    # parsing + error mapping (400/404/503/500); rate-limit mw injected
     *_test.go                     # unit + //go:build integration tests
   auth/                           # /api/v1/auth/* — accounts + JWT auth, gates /routes/safe
     model.go / dto.go / errors.go # User/session models, request/response DTOs, sentinel errors
@@ -64,6 +74,11 @@ internal/
     *_test.go                     # unit (token/service/handler/middleware) + integration
   httpx/response.go               # shared JSON helpers
 sqlc.yaml                         # sqlc config (auth relational CRUD only)
+bench/                            # benchmark suite (here, not scripts/, which is root-owned locally)
+  k6/01..07_*.js                  # 7 scenarios (cache hit/miss, no-redis, auth flow, rate limit, …)
+  k6/lib/                         # shared: config (coords), auth (login), summary (handleSummary)
+  run.sh / snapshot_stats.sh      # orchestrator (boots API per mode, snapshots /debug/stats) + snapshot
+  results/                        # committed k6 summaries + server-stat diffs (diffable per commit)
 scripts/osm/                      # offline OSM → road graph import (not queried by the API)
   download_caba_osm.sh            # fetch CABA .pbf into data/osm/
   import_osm_graph.sh             # osm2pgrouting (foot profile) → osm_ways / osm_ways_vertices_pgr
@@ -122,11 +137,24 @@ REFRESH_TOKEN_TTL_DAYS=7
 REFRESH_COOKIE_NAME=refresh_token
 COOKIE_SECURE=false             # true in production (HTTPS)
 COOKIE_SAMESITE=lax             # lax | strict | none
+
+# Redis + resilience (rate limiting + route cache). Flags default to false in
+# code; .env.example ships them on. RATE_LIMIT_ENABLED and ROUTE_CACHE_ENABLED
+# both REQUIRE REDIS_ENABLED=true (invalid combos fail fast at startup).
+REDIS_ENABLED=true
+REDIS_ADDR=localhost:6379
+REDIS_PASSWORD=
+REDIS_DB=0
+RATE_LIMIT_ENABLED=true
+ROUTE_CACHE_ENABLED=true
+METRICS_ENABLED=false           # GET /api/v1/debug/stats (loopback-only); on for benchmarking
 ```
 
 The Postgres container (`pgrouting/pgrouting:16-3.4-3.6.1` — PostGIS 3.4 + pgRouting 3.6 on PG16) maps
 host port **5434** → container 5432 (avoids clashes with other local Postgres instances).
 `POSTGRES_HOST/PORT/DB/USER/PASSWORD` are also read by docker-compose, the ETL, and the OSM import.
+The `redis:7-alpine` service in docker-compose backs rate limiting + the route cache; the host-run API
+reaches it at `localhost:6379` (`docker compose up -d redis`).
 
 Copy `.env.example` to `.env` before running.
 
@@ -139,6 +167,46 @@ go run ./cmd/api
 # Run tests
 go test ./...
 ```
+
+## Rate limiting & caching
+
+Both are **Redis-backed** and **opt-in** via env flags; both require `REDIS_ENABLED=true` (an invalid
+combination fails fast at startup with `invalid config: …`). Code defaults are all `false`, so a bare
+`go run ./cmd/api` needs no Redis (the baseline benchmark mode).
+
+- **Rate limiting** (`internal/ratelimit/`, `RATE_LIMIT_ENABLED`): per-endpoint, distributed, via
+  `ulule/limiter` with a Redis store, applied as chi middleware **before** the handler. Over the limit
+  → `429` with `X-RateLimit-*` / `Retry-After` headers (the handler is never reached). Keyed by client
+  **IP** (no `X-Forwarded-For` trust by default); per-user keying is deferred. Each endpoint has its
+  own Redis key prefix so quotas don't bleed:
+
+  | Endpoint | Limit | Reason |
+  |---|---:|---|
+  | `GET /routes/safe` | 10/min | expensive pgRouting route calculation |
+  | `POST /auth/login` | 5/min | brute-force protection |
+  | `GET /crimes/nearby` | 30/min | lightweight geospatial query |
+  | `GET /roadgraph/stats` | 60/min | read-only stats |
+
+  The middleware is injected into each handler's constructor (like the auth middleware) and applied
+  with `r.With(...)`; when disabled, `app.New` injects an identity passthrough.
+
+- **Route cache** (`internal/saferoutes/cache*.go`, `ROUTE_CACHE_ENABLED`): a `RouteCache` seam
+  (`RedisRouteCache` / `NoopRouteCache`). The service checks the cache after resolving
+  bucket/weekday/active-model and **before** snapping/routing; hit → cached `SafeRoutesResponse`, miss
+  → compute + store (1 h TTL). Key:
+  `route:safe:{olat:.5f}:{olng:.5f}:{dlat:.5f}:{dlng:.5f}:{bucket}:{weekday}:{modelID}` — a model
+  change naturally bypasses stale entries. Fail-open: a Redis error is logged and treated as a miss.
+
+**Benchmark modes** (selected by the three flags, no code change): baseline `false/false/false` ·
+redis-only `true/false/false` · rate-limit `true/true/false` · cache `true/false/true` ·
+cache+rate-limit `true/true/true`.
+
+**Measuring it** (`bench/`): `GET /api/v1/debug/stats` (gated by `METRICS_ENABLED`, loopback-only)
+exposes pgxpool saturation + cache hit/miss counters; `/routes/safe` sets `X-Cache: hit|miss`.
+`bench/run.sh [01..07]` boots the API per mode, runs a k6 scenario (latency/throughput/errors),
+snapshots `/debug/stats` before/after, and writes diffable results to `bench/results/`. The 7
+scenarios: sin-Redis, cache hit, cache miss, auth flow, login rate limit, token revocation, pool
+exhaustion. See `bench/README.md`.
 
 ## ETL pipeline (Python)
 
@@ -206,15 +274,16 @@ language: always "estimated historical exposure", never safety guarantees.
 | — | Network Temporal KDE risk scoring + `GET /api/v1/routes/safe` | done |
 | — | Route explainability metadata on `/routes/safe` | done |
 | — | User accounts + JWT auth (`/api/v1/auth/*`), `/routes/safe` gated | done |
+| — | Redis rate limiting (per-endpoint, by IP) + `/routes/safe` route cache + benchmark flags | done |
 
 ## Not yet implemented
 
 - ML risk models (LightGBM/XGBoost) — the schema is ready (new `risk_model_versions` rows)
 - User avoid-points / community reports / saved routes
 - Authorization roles (current auth only distinguishes a valid, active user)
-- Rate limiting on `/auth/login` (the `login_attempts` table is in place for it)
+- Per-user (post-auth) rate limiting — current rate limiting is by IP only; user keying deferred
+- GCRA / sliding-window-log rate limiting (first iteration uses ulule/limiter fixed window)
 - Refresh-token reuse-detection lockout (rotation + `replaced_by` recorded; family revocation deferred)
-- Redis route cache (key shape documented in the safe-route-scoring design)
 - Frontend
 - Aggregated statistics
 

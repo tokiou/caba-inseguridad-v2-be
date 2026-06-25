@@ -25,6 +25,11 @@ type SafeRoutesResponse struct {
 	WeekdayType  string           `json:"weekday_type"`
 	ModelVersion ModelVersionInfo `json:"model_version"`
 	Routes       []SafeRoute      `json:"routes"`
+
+	// FromCache reports whether this response was served from the route cache.
+	// It is never serialized (and so never stored in the cached payload); the
+	// handler reads it to set the X-Cache header.
+	FromCache bool `json:"-"`
 }
 
 type LatLng struct {

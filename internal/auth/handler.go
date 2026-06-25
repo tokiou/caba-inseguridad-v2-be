@@ -30,19 +30,22 @@ type CookieConfig struct {
 }
 
 type Handler struct {
-	service    authService
-	middleware func(http.Handler) http.Handler
-	cookie     CookieConfig
-	log        *slog.Logger
+	service        authService
+	middleware     func(http.Handler) http.Handler
+	loginRateLimit func(http.Handler) http.Handler
+	cookie         CookieConfig
+	log            *slog.Logger
 }
 
-func NewHandler(service authService, middleware func(http.Handler) http.Handler, cookie CookieConfig, log *slog.Logger) *Handler {
-	return &Handler{service: service, middleware: middleware, cookie: cookie, log: log}
+func NewHandler(service authService, middleware, loginRateLimit func(http.Handler) http.Handler, cookie CookieConfig, log *slog.Logger) *Handler {
+	return &Handler{service: service, middleware: middleware, loginRateLimit: loginRateLimit, cookie: cookie, log: log}
 }
 
 func (h *Handler) Register(r chi.Router) {
 	r.Post("/auth/register", h.register)
-	r.Post("/auth/login", h.login)
+	// Only login is rate limited (brute-force protection); the other /auth/*
+	// endpoints are not in the source spec's limit table.
+	r.With(h.loginRateLimit).Post("/auth/login", h.login)
 	r.Post("/auth/refresh", h.refresh)
 	r.Post("/auth/logout", h.logout)
 	// /auth/me is the one auth route that requires an access token.

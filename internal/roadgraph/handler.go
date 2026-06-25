@@ -17,16 +17,19 @@ type service interface {
 }
 
 type Handler struct {
-	service service
-	log     *slog.Logger
+	service   service
+	rateLimit func(http.Handler) http.Handler
+	log       *slog.Logger
 }
 
-func NewHandler(svc service, log *slog.Logger) *Handler {
-	return &Handler{service: svc, log: log}
+func NewHandler(svc service, rateLimit func(http.Handler) http.Handler, log *slog.Logger) *Handler {
+	return &Handler{service: svc, rateLimit: rateLimit, log: log}
 }
 
 func (h *Handler) Register(r chi.Router) {
-	r.Get("/roadgraph/stats", h.GetStats)
+	// Only the stats probe is rate limited; /roadgraph/route is left unbounded
+	// in this iteration (it is not in the source spec's limit table).
+	r.With(h.rateLimit).Get("/roadgraph/stats", h.GetStats)
 	r.Get("/roadgraph/route", h.GetWalkRoute)
 }
 

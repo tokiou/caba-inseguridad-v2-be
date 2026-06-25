@@ -1,0 +1,1 @@
+{"uptime_seconds":0.736884613,"goroutines":6,"pgxpool":{"acquired_conns":0,"idle_conns":1,"total_conns":1,"max_conns":5,"acquire_count":2,"empty_acquire_count":1,"canceled_acquire_count":0,"new_conns_count":1,"acquire_duration_ms":4},"cache":{"enabled":false,"hits":0,"misses":0,"errors":0,"sets":0,"hit_rate":0}}

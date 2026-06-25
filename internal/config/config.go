@@ -24,6 +24,20 @@ type Config struct {
 	RefreshCookieName string
 	CookieSecure      bool
 	CookieSameSite    string
+
+	// Redis + resilience. The two feature flags both require RedisEnabled;
+	// app.New validates that and fails fast otherwise. All three default to
+	// false so a bare `go run ./cmd/api` needs no Redis (the baseline mode).
+	RedisEnabled      bool
+	RedisAddr         string
+	RedisPassword     string
+	RedisDB           int
+	RateLimitEnabled  bool
+	RouteCacheEnabled bool
+
+	// MetricsEnabled exposes GET /api/v1/debug/stats (pgxpool + cache + runtime).
+	// It leaks internals, so it defaults off and the handler is loopback-only.
+	MetricsEnabled bool
 }
 
 func Load() Config {
@@ -44,6 +58,15 @@ func Load() Config {
 		RefreshCookieName: getEnv("REFRESH_COOKIE_NAME", "refresh_token"),
 		CookieSecure:      getEnvBool("COOKIE_SECURE", false),
 		CookieSameSite:    getEnv("COOKIE_SAMESITE", "lax"),
+
+		RedisEnabled:      getEnvBool("REDIS_ENABLED", false),
+		RedisAddr:         getEnv("REDIS_ADDR", "localhost:6379"),
+		RedisPassword:     getEnv("REDIS_PASSWORD", ""),
+		RedisDB:           getEnvInt("REDIS_DB", 0),
+		RateLimitEnabled:  getEnvBool("RATE_LIMIT_ENABLED", false),
+		RouteCacheEnabled: getEnvBool("ROUTE_CACHE_ENABLED", false),
+
+		MetricsEnabled: getEnvBool("METRICS_ENABLED", false),
 	}
 }
 
