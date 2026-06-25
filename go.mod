@@ -15,6 +15,7 @@ require (
 	github.com/samber/slog-http v1.12.1
 	github.com/swaggo/http-swagger/v2 v2.0.2
 	github.com/ulule/limiter/v3 v3.11.2
+	go.uber.org/goleak v1.3.0
 	golang.org/x/crypto v0.53.0
 )
 

@@ -15,6 +15,23 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+// newTestRedisCache builds a RedisRouteCache backed by miniredis and closes both
+// the client (its pool goroutines) and the server when the test ends, so goleak
+// stays green.
+func newTestRedisCache(t *testing.T) *RedisRouteCache {
+	t.Helper()
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() {
+		_ = client.Close()
+		mr.Close()
+	})
+	return NewRedisRouteCache(client, discardLogger())
+}
+
 func TestNoopRouteCache_AlwaysMisses(t *testing.T) {
 	var c NoopRouteCache
 	if err := c.Set(context.Background(), "k", SafeRoutesResponse{TimeBucket: "night"}, time.Minute); err != nil {
@@ -30,12 +47,7 @@ func TestNoopRouteCache_AlwaysMisses(t *testing.T) {
 }
 
 func TestRedisRouteCache_RoundTrip(t *testing.T) {
-	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatalf("miniredis: %v", err)
-	}
-	defer mr.Close()
-	cache := NewRedisRouteCache(redis.NewClient(&redis.Options{Addr: mr.Addr()}), discardLogger())
+	cache := newTestRedisCache(t)
 
 	if _, ok, err := cache.Get(context.Background(), "route:x"); err != nil || ok {
 		t.Fatalf("pre-set Get = (ok %v, err %v), want miss", ok, err)
@@ -61,12 +73,7 @@ func TestRedisRouteCache_RoundTrip(t *testing.T) {
 }
 
 func TestRedisRouteCache_StatsCounters(t *testing.T) {
-	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatalf("miniredis: %v", err)
-	}
-	defer mr.Close()
-	c := NewRedisRouteCache(redis.NewClient(&redis.Options{Addr: mr.Addr()}), discardLogger())
+	c := newTestRedisCache(t)
 
 	c.Get(context.Background(), "a") // miss
 	c.Get(context.Background(), "b") // miss

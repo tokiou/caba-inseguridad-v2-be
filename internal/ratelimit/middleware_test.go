@@ -15,8 +15,12 @@ func newTestClient(t *testing.T) *redis.Client {
 	if err != nil {
 		t.Fatalf("miniredis: %v", err)
 	}
-	t.Cleanup(mr.Close)
-	return redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() {
+		_ = client.Close() // close pool goroutines so goleak stays green
+		mr.Close()
+	})
+	return client
 }
 
 func okHandler() http.Handler {

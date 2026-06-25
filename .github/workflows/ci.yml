@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod   # CI Go version tracks go.mod
+          cache: true
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      # Race detector + coverage; the goroutine-leak checks run inside the suite
+      # (goleak.VerifyTestMain in internal/ratelimit and internal/saferoutes).
+      # Integration tests (//go:build integration) need a populated PostGIS +
+      # road-graph dataset, so they run locally (make test-integration), not here.
+      - name: Test (race + coverage + goleak)
+        run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
+
+      - name: Coverage total
+        run: go tool cover -func=coverage.out | tail -1
+
+      - name: Upload coverage profile
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
