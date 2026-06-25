@@ -1,0 +1,23 @@
+# Keep the build context to what `go build ./cmd/api` needs (+ openapi.yaml,
+# copied in the runtime stage). Everything else just bloats the context.
+.git
+.github
+.claude
+.opencode
+.vscode
+data
+bench
+docs
+openspec
+etl
+scripts
+migrations
+sqlc.yaml
+*.md
+.env
+.env.*
+coverage.*
+*.out
+coverage.html
+Dockerfile
+.dockerignore

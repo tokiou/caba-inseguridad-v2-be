@@ -161,12 +161,25 @@ Copy `.env.example` to `.env` before running.
 ## Running
 
 ```bash
-# Start the API
+# Start the API (host)
 go run ./cmd/api
 
-# Run tests
-go test ./...
+# Tests (see Makefile): unit, race+goleak, coverage
+make test            # go test ./...
+make test-race       # -race + goroutine-leak checks (goleak)
+make cover           # coverage.out + total %
+make test-integration  # //go:build integration — needs a populated PostGIS DB
+
+# Container (multi-stage → distroless static, non-root, ~32 MB)
+docker build -t caba-be .
+docker run --rm --network host \
+  -e DATABASE_URL=postgres://postgres:postgres@localhost:5434/caba_routes?sslmode=disable \
+  -e REDIS_ENABLED=true -e RATE_LIMIT_ENABLED=true -e ROUTE_CACHE_ENABLED=true \
+  caba-be
 ```
+
+CI (`.github/workflows/ci.yml`) runs build + vet + `go test -race -coverprofile` on
+every push/PR; integration tests stay local (they need a populated dataset).
 
 ## Rate limiting & caching
 
