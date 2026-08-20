@@ -1,165 +1,238 @@
-# CABA Rutas Seguras
+# CABA Safe Routes Backend
 
-Backend para calcular rutas caminables en la Ciudad Autónoma de Buenos Aires
-priorizando una menor exposición histórica estimada a zonas con incidentes.
-El sistema combina datos abiertos de delitos, un grafo peatonal de
-OpenStreetMap y un modelo offline de riesgo temporal sobre PostgreSQL,
-PostGIS y pgRouting.
+Backend for pedestrian routing in Buenos Aires (CABA) that prioritizes lower
+estimated historical exposure to crime hotspots. It combines open crime data,
+an OpenStreetMap pedestrian graph, PostGIS, pgRouting, and an offline network
+temporal risk pipeline.
 
-> El producto estima exposición histórica. No ofrece garantías de seguridad ni
-> reemplaza el criterio de la persona que recorre la ruta.
+> The service estimates historical exposure. It does not provide a safety
+> guarantee or replace the traveler's judgment.
 
-## Qué resuelve
+## What Was Built
 
-- Consulta de incidentes cercanos a una coordenada mediante PostGIS.
-- Rutas peatonales sobre un grafo real de calles.
-- Alternativas de ruta ponderadas por riesgo histórico, horario y tipo de día.
-- Explicación de la ruta: métricas, nivel de riesgo y factores relevantes.
-- Usuarios, login, JWT de corta duración y refresh tokens rotatorios.
-- Cache distribuida de rutas y rate limiting por endpoint, ambos opcionales.
-- Pipeline ETL reproducible para normalizar y cargar los datos.
+- Geospatial crime queries using PostgreSQL/PostGIS and spatial indexes.
+- A normalized pedestrian road graph imported from OpenStreetMap.
+- `pgRouting` shortest-path and K-shortest-path calculations.
+- Offline Network Temporal KDE risk scores by time bucket and weekday type.
+- Risk-weighted route alternatives with explainability metadata.
+- User registration, bcrypt password hashing, short-lived JWT access tokens,
+  opaque refresh tokens, rotation, and revocation.
+- Redis-backed route caching and per-endpoint rate limiting, both optional.
+- Structured request logging, request IDs, health checks, and loopback-only
+  runtime statistics.
+- A k6 benchmark suite that measures both client latency and server-side
+  resource pressure.
 
-## Por qué es más escalable que un backend típico
+## Architecture
 
-La escalabilidad aquí se pensó como capacidad de crecer sin convertir cada
-incremento de tráfico o de complejidad en un cambio transversal.
-
-### 1. Capas con responsabilidades claras
-
-El flujo es:
-
-```text
-HTTP -> router chi -> handler -> service -> repository -> PostgreSQL/PostGIS
-```
-
-Los handlers sólo traducen HTTP, los services contienen reglas de negocio y
-los repositories encapsulan el acceso a datos. Esto permite:
-
-- probar la lógica sin levantar una base de datos;
-- cambiar la implementación de persistencia sin reescribir HTTP;
-- agregar endpoints o dominios sin crear dependencias circulares;
-- escalar cada tipo de trabajo de forma independiente más adelante.
-
-### 2. La geolocalización está en la base adecuada
-
-PostGIS resuelve proximidad, geometrías e índices espaciales en PostgreSQL, en
-lugar de traer grandes volúmenes a Go para calcular distancias. pgRouting
-resuelve el camino sobre el grafo de calles. Esto reduce trabajo en la API y
-permite que el motor de datos use índices, planes de consulta y pools de
-conexiones.
-
-Las consultas geoespaciales usan `pgx` y SQL explícito. El CRUD relacional de
-autenticación usa `sqlc`. La separación evita forzar a una herramienta a
-entender funciones específicas de PostGIS que no soporta.
-
-### 3. El cálculo pesado de riesgo no ocurre en cada request
-
-El pipeline Network Temporal KDE corre offline: normaliza delitos, los asocia
-al grafo, construye vecindades y calcula scores por contexto temporal. La API
-lee los scores ya preparados. Así, el costo de procesar todo el histórico no
-se multiplica por cada usuario que solicita una ruta.
-
-Los modelos se versionan en la base y una modificación del modelo también
-invalida naturalmente las claves de cache de rutas.
-
-### 4. Redis desacopla presión y tiene degradación segura
-
-Redis se usa para dos funciones que pueden crecer con el tráfico:
-
-- rate limiting distribuido por endpoint e IP;
-- cache de respuestas de `/api/v1/routes/safe`.
-
-Ambas funciones son opt-in. La cache tiene TTL de una hora y es fail-open: si
-Redis falla, la request intenta calcular la ruta en lugar de convertir una
-dependencia auxiliar en una caída total. La API también puede funcionar sin
-Redis para el modo base.
-
-### 5. Protección específica para operaciones costosas
-
-Cada endpoint tiene su propio límite, evitando que un consumidor de consultas
-baratas consuma la cuota de rutas. Los límites actuales son:
-
-| Endpoint | Límite |
-| --- | ---: |
-| `GET /api/v1/routes/safe` | 10 por minuto |
-| `POST /api/v1/auth/login` | 5 por minuto |
-| `GET /api/v1/crimes/nearby` | 30 por minuto |
-| `GET /api/v1/roadgraph/stats` | 60 por minuto |
-
-### 6. Pooling, observabilidad y pruebas de carga
-
-La API usa un pool de conexiones `pgxpool`, request IDs y logs estructurados.
-El endpoint de estadísticas, protegido y limitado a loopback, expone estado
-del pool, runtime y contadores de cache para medir saturación.
-
-El directorio `bench/` contiene escenarios k6 para comparar baseline, Redis,
-cache, rate limiting, autenticación y agotamiento del pool. Esto permite
-validar decisiones con datos en vez de asumir que una optimización funciona.
-
-### 7. Seguridad y operación considerada desde el diseño
-
-- passwords con bcrypt;
-- access tokens JWT de vida corta;
-- refresh tokens opacos almacenados como hash;
-- refresh cookie HttpOnly y configuración de `Secure`/`SameSite`;
-- rechazo de secretos JWT débiles fuera de desarrollo;
-- contenedor multi-stage, estático, distroless y non-root;
-- CI con build, vet, cobertura, race detector y chequeos de goroutines.
-
-## Arquitectura
+The request path follows explicit boundaries:
 
 ```text
-cmd/api
-  └── wiring de configuración, Postgres, Redis y router
-
-internal/
-  app/             composición y registro de rutas
-  auth/            cuentas, tokens y middleware de autenticación
-  crimes/          incidentes cercanos
-  saferoutes/      rutas ponderadas por riesgo y cache
-  roadgraph/       estado y rutas del grafo peatonal
-  ratelimit/       límites distribuidos por endpoint
-  observability/   estadísticas operativas de desarrollo/benchmark
-  platform/        clientes de PostgreSQL y Redis
-  httpx/           respuestas JSON compartidas
-
-etl/
-  python/           normalización y carga de delitos
-  risk_network_kde/ cálculo offline de riesgo sobre la red
-
-scripts/osm/       importación y limpieza offline del grafo OSM
-migrations/        esquema PostGIS, grafo, riesgo y autenticación
-bench/              escenarios k6 y snapshots de rendimiento
+HTTP request
+    -> chi router and middleware
+    -> HTTP handler
+    -> application service
+    -> repository interface
+    -> PostgreSQL/PostGIS or Redis
 ```
 
-## API principal
+Handlers are responsible for HTTP parsing and response mapping. Services own
+validation and orchestration. Repositories own data access. `cmd/api` wires
+dependencies but does not contain domain behavior.
 
-Base URL local: `http://localhost:8080`
+This structure is important for scale because expensive concerns are isolated:
 
-| Método | Endpoint | Descripción | Auth |
+- API instances remain stateless apart from their database and Redis clients,
+  so the HTTP tier can be replicated horizontally.
+- Repository interfaces allow unit tests and alternative implementations
+  without coupling business logic to PostgreSQL.
+- Connection pooling bounds database concurrency instead of creating one
+  unbounded database connection per request.
+- Redis provides shared state for cache entries and rate-limit counters across
+  API instances.
+- The route cache is keyed by coordinates, temporal context, and active model
+  ID, so model activation does not serve responses generated by an older
+  model.
+
+## Data and Compute Separation
+
+The system deliberately separates offline work from request-time work.
+
+```text
+Open CABA crime data
+    -> normalization and quality checks
+    -> crime-to-edge snapping
+    -> network neighborhoods
+    -> temporal risk scores
+    -> versioned PostgreSQL model data
+
+API request
+    -> resolve time bucket and active model
+    -> route cache lookup
+    -> pgRouting over risk-weighted edge costs on a miss
+```
+
+Risk scoring is not recomputed from the complete historical dataset for every
+request. The API reads versioned scores and applies them to routing costs. The
+expensive route computation is still available when the cache misses, but the
+historical aggregation itself belongs to the offline pipeline.
+
+PostGIS handles spatial predicates and geometry operations in the database.
+pgRouting executes graph algorithms next to the graph data. This avoids
+shipping large spatial datasets to the application process and keeps the Go
+service focused on orchestration and HTTP concerns.
+
+Geospatial queries use `pgx` and explicit SQL. Relational authentication CRUD
+uses `sqlc`. This is intentional: `sqlc` owns the relational auth schema while
+PostGIS-specific queries remain in the driver layer that can express and tune
+them directly.
+
+## Scalability and Resilience Mechanisms
+
+### Horizontal scaling
+
+The API process is designed to be replicated behind a load balancer. Session
+continuity does not depend on in-process state: access tokens are JWTs and
+refresh sessions are persisted. Shared cache and rate-limit state is stored in
+Redis rather than local memory.
+
+The current repository does not ship an orchestrator, autoscaling policy,
+read replicas, or a production load-balancer configuration. Those are
+deployment concerns to add after measuring the target environment.
+
+### Cache placement
+
+The route cache is checked after resolving the temporal bucket, weekday type,
+and active risk model, but before snapping and routing. This placement avoids
+both unnecessary database work and incorrect reuse across model or temporal
+contexts.
+
+The cache is fail-open: Redis errors are counted and logged as cache misses,
+then the service attempts the route calculation. Redis is an acceleration and
+coordination layer, not the system of record.
+
+### Bounded admission and database pressure
+
+Rate limits are applied before handlers and use independent Redis key prefixes
+per endpoint. Expensive routing, login, nearby-crime queries, and graph stats
+therefore have separate admission policies. A rate-limited request does not
+consume application or database work.
+
+The `pgxpool` exposes acquisition and wait counters through the benchmark
+stats endpoint. This makes pool saturation observable instead of treating
+database contention as an unexplained increase in HTTP latency.
+
+### Failure behavior
+
+The pool-exhaustion benchmark demonstrates queueing under a deliberately small
+pool rather than process failure. The service currently queues until a
+connection is available; an acquire/query timeout is a documented follow-up
+for bounding latency as well as errors.
+
+## Measured Performance
+
+The committed benchmark run is available at
+[`bench/results/2026-06-23T18-47-40/comparison.md`](bench/results/2026-06-23T18-47-40/comparison.md).
+
+### Methodology
+
+- Real PostgreSQL + PostGIS + pgRouting.
+- Isolated Redis instance for Redis-enabled scenarios.
+- k6 2.0.0.
+- API on a development machine, port `8090`.
+- Standard load scenarios used 10 virtual users for 15 seconds.
+- Pool exhaustion used 40 VUs with `pool_max_conns=5`.
+- Warmup is performed by `bench/run.sh`; the result directory records the
+  Git SHA and server snapshots before and after each scenario.
+- These are comparative engineering measurements, not production SLOs. The
+  exact hardware, dataset state, and deployment topology must be fixed before
+  using them as capacity commitments.
+
+### Results
+
+| Scenario | Throughput | p50 | p95 | p99 | Errors | Server-side observation |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| Uncached safe route baseline | 6.0 RPS | 1,636 ms | 1,880 ms | 1,939 ms | 0% | About 12 pool acquisitions per request |
+| Safe route cache hit | 5,056 RPS | 1.9 ms | 2.4 ms | 2.8 ms | 0% | 76,828 hits, 100% hit rate; route DB work bypassed |
+| Safe route cache miss | 6.8 RPS | 1,388 ms | 1,756 ms | 1,836 ms | 0% | Recomputes route; close to baseline cost |
+| Full auth flow | 236 RPS | 1.9 ms | 204 ms | 209 ms | 0.03% | Bcrypt dominates the flow; safe route was a cache hit |
+| Pool exhaustion | 5.0 RPS | 7,534 ms | 7,959 ms | 8,089 ms | 0% 5xx | 2,230/2,298 acquisitions waited; 1,035 s cumulative wait |
+
+The cache comparison is the most consequential result: for the tested fixed
+coordinates and workload, a cache hit reduced p99 latency from approximately
+`1.94 s` to `2.8 ms` and increased observed throughput from approximately `6`
+to `5,056 RPS`. A miss remained close to the uncached path, which indicates
+that the cache lookup adds little relative to route computation and that the
+benefit comes from avoiding pgRouting and risk joins on a hit.
+
+The pool test shows a different trade-off. With only five connections and 40
+VUs, the service preserved availability and returned zero 5xx responses, but
+queued work drove p99 latency above eight seconds. This is useful capacity
+evidence, not a claim that the current pool configuration is production-ready:
+the next step is to add bounded acquire/query timeouts and size the pool from
+measured database capacity.
+
+### Functional and protection checks
+
+The benchmark suite also verifies behavior rather than only latency:
+
+- Login rate limiting accepts five requests and returns `429` afterward.
+- Refresh-token rotation rejects reuse of a replaced token.
+- Logout revokes the refresh session and subsequent refresh attempts return
+  `401`.
+- Pool exhaustion returns zero 5xx responses in the recorded run.
+
+Expected `429` and `401` responses are counted by k6 as HTTP failures in those
+scenarios, so the result summaries distinguish transport failure from an
+expected security response and assert the intended checks explicitly.
+
+## Runtime Components
+
+```text
+cmd/api/                 application entrypoint and dependency wiring
+internal/app/            router, composition, and route registration
+internal/auth/           users, sessions, JWTs, refresh rotation
+internal/crimes/         nearby crime queries
+internal/saferoutes/     risk-weighted routes, aggregation, and cache
+internal/roadgraph/      graph status and direct graph routing
+internal/ratelimit/      Redis-backed endpoint policies
+internal/platform/       PostgreSQL and Redis clients
+internal/observability/  pool, cache, and runtime statistics
+etl/python/              crime data normalization and loading
+etl/risk_network_kde/    offline network-temporal risk pipeline
+scripts/osm/             OSM graph import and cleanup
+migrations/              PostGIS, graph, risk, route profile, and auth schema
+bench/                   k6 scenarios and reproducible result snapshots
+```
+
+## API Surface
+
+Base URL for local development: `http://localhost:8080`
+
+| Method | Endpoint | Purpose | Authentication |
 | --- | --- | --- | --- |
-| `GET` | `/api/v1/health` | health check | No |
-| `GET` | `/api/v1/crimes/nearby` | incidentes cercanos | No |
-| `GET` | `/api/v1/roadgraph/stats` | estadísticas del grafo | No |
-| `GET` | `/api/v1/roadgraph/route` | ruta sobre el grafo | No |
-| `GET` | `/api/v1/routes` | ruta convencional | No |
-| `GET` | `/api/v1/routes/safe` | alternativas ponderadas por riesgo | Sí |
-| `POST` | `/api/v1/auth/register` | registrar usuario | No |
-| `POST` | `/api/v1/auth/login` | iniciar sesión | No |
-| `POST` | `/api/v1/auth/refresh` | renovar access token | Cookie |
-| `POST` | `/api/v1/auth/logout` | revocar refresh token | Cookie |
+| `GET` | `/api/v1/health` | Liveness check | Public |
+| `GET` | `/api/v1/crimes/nearby` | Nearby crime incidents | Public |
+| `GET` | `/api/v1/roadgraph/stats` | Graph statistics | Public |
+| `GET` | `/api/v1/roadgraph/route` | Direct graph route | Public |
+| `GET` | `/api/v1/routes` | Conventional route | Public |
+| `GET` | `/api/v1/routes/safe` | Risk-weighted alternatives | Bearer token |
+| `POST` | `/api/v1/auth/register` | Create account | Public |
+| `POST` | `/api/v1/auth/login` | Create access session | Public |
+| `POST` | `/api/v1/auth/refresh` | Rotate refresh session | Refresh cookie |
+| `POST` | `/api/v1/auth/logout` | Revoke refresh session | Refresh cookie |
 
-La especificación OpenAPI está en `openapi.yaml` y la interfaz Swagger está
-disponible en `/docs/` cuando la API está corriendo.
+OpenAPI is served from `openapi.yaml`; Swagger UI is available at `/docs/`
+when the API is running.
 
-## Requisitos
+## Local Setup
 
-- Go 1.25 o superior.
-- Docker y Docker Compose para PostgreSQL/PostGIS, pgRouting y Redis.
-- Python 3 para el ETL.
-- k6 sólo para benchmarks.
+Requirements:
 
-## Inicio rápido
+- Go 1.25 or newer.
+- Docker and Docker Compose.
+- Python 3 for the ETL.
+- k6 for load tests.
 
 ```bash
 cp .env.example .env
@@ -167,28 +240,74 @@ docker compose up -d postgres redis
 go run ./cmd/api
 ```
 
-En otra terminal:
+Then verify the process:
 
 ```bash
 curl http://localhost:8080/api/v1/health
 ```
 
-La base necesita tener aplicadas las migraciones y los datos cargados para
-usar consultas de delitos o routing. La API puede iniciarse sin Redis si se
-desactivan `REDIS_ENABLED`, `RATE_LIMIT_ENABLED` y `ROUTE_CACHE_ENABLED`.
+PostgreSQL must have the migrations, crime data, and normalized road graph
+loaded before routing and crime queries can return useful data. Redis can be
+disabled for the baseline mode by setting `REDIS_ENABLED=false`,
+`RATE_LIMIT_ENABLED=false`, and `ROUTE_CACHE_ENABLED=false`.
 
-## Desarrollo y validación
+## Development and Verification
 
 ```bash
-make build              # compilar todos los paquetes
-make vet                # análisis estático de Go
-make test               # tests unitarios
-make test-race          # race detector + chequeos de goroutines
-make cover              # cobertura y coverage.out
-make test-integration   # requiere PostGIS, grafo y Redis poblados
+make build
+make vet
+make test
+make test-race
+make cover
+make test-integration
 ```
 
-Para cargar delitos:
+Integration tests require a populated PostGIS/pgRouting database and Redis.
+The regular CI path runs build, vet, race-enabled tests, coverage, and
+goroutine-leak checks; integration tests remain environment-dependent.
+
+To run the benchmark suite:
+
+```bash
+docker compose up -d postgres redis
+bench/run.sh                # all scenarios
+bench/run.sh 02 03          # cache hit/miss comparison
+VUS=20 DURATION=1m bench/run.sh 02
+MAX_VUS=80 bench/run.sh 07  # pool saturation ramp
+```
+
+The benchmark harness requires `go`, `k6`, `curl`, and `jq`. It enables the
+loopback-only `/api/v1/debug/stats` endpoint and snapshots `pgxpool` and cache
+counters before and after each run.
+
+## Configuration Modes
+
+The runtime can be evaluated without code changes:
+
+| Mode | `REDIS_ENABLED` | `RATE_LIMIT_ENABLED` | `ROUTE_CACHE_ENABLED` |
+| --- | --- | --- | --- |
+| Baseline | false | false | false |
+| Redis only | true | false | false |
+| Rate limiting | true | true | false |
+| Cache | true | false | true |
+| Cache and rate limiting | true | true | true |
+
+Important variables:
+
+```env
+DATABASE_URL=postgres://postgres:postgres@localhost:5434/caba_routes?sslmode=disable
+REDIS_ENABLED=true
+REDIS_ADDR=localhost:6379
+RATE_LIMIT_ENABLED=true
+ROUTE_CACHE_ENABLED=true
+METRICS_ENABLED=false
+```
+
+`RATE_LIMIT_ENABLED` and `ROUTE_CACHE_ENABLED` require
+`REDIS_ENABLED=true`. Keep `METRICS_ENABLED=false` outside local development
+and benchmarking because the endpoint exposes operational internals.
+
+## Data Pipeline
 
 ```bash
 cd etl/python
@@ -198,54 +317,26 @@ python normalize_crimes.py
 python load_to_postgres.py
 ```
 
-La construcción del grafo peatonal está documentada en los scripts de
-`scripts/osm/`. Los datos fuente grandes bajo `data/raw/` y los artefactos
-generados no forman parte del flujo normal de versionado.
+The OSM graph workflow is documented by the scripts under `scripts/osm/`:
+download, import with a pedestrian profile, normalize into application tables,
+and mark anomalous edges as non-routable without deleting source data.
 
-## Configuración de escalabilidad
+## Current Boundaries
 
-Las flags se pueden combinar sin cambiar código:
+Implemented scalability mechanisms do not eliminate all bottlenecks. The
+current system still depends on PostgreSQL for route computation and uses a
+single primary database topology. It does not yet include production
+orchestration, autoscaling, read replicas, external metrics/tracing, request
+deadlines for pool acquisition, or distributed tracing.
 
-| Modo | Redis | Rate limit | Cache |
-| --- | --- | --- | --- |
-| Baseline | No | No | No |
-| Redis-only | Sí | No | No |
-| Rate limit | Sí | Sí | No |
-| Cache | Sí | No | Sí |
-| Cache + rate limit | Sí | Sí | Sí |
+The measured pool test identifies bounded acquisition timeouts as a concrete
+follow-up. Other future capabilities include authorization roles, user
+avoid-points, community reports, and ML-based risk models.
 
-Variables importantes:
+## Further Documentation
 
-```env
-DATABASE_URL=postgres://postgres:postgres@localhost:5434/caba_routes?sslmode=disable
-REDIS_ENABLED=true
-RATE_LIMIT_ENABLED=true
-ROUTE_CACHE_ENABLED=true
-METRICS_ENABLED=false
-```
-
-`RATE_LIMIT_ENABLED` y `ROUTE_CACHE_ENABLED` requieren
-`REDIS_ENABLED=true`. `METRICS_ENABLED` debe quedar apagado salvo para
-desarrollo o benchmarks, porque expone información operativa y sólo acepta
-acceso loopback.
-
-## Límites actuales
-
-El diseño está preparado para escalar horizontalmente la API, pero el
-despliegue actual no incluye todavía un orquestador, réplicas de lectura,
-particionado de datos ni observabilidad externa. También quedan fuera del
-alcance actual los roles de autorización, los puntos a evitar, reportes de la
-comunidad y modelos ML de riesgo.
-
-La siguiente evolución natural sería medir con los escenarios de `bench/`,
-identificar el cuello de botella dominante y recién entonces decidir entre
-réplicas de PostgreSQL, más instancias de API, tuning del pool o mejoras del
-cache.
-
-## Documentación relacionada
-
-- `CLAUDE.md`: contexto técnico completo y convenciones del repositorio.
-- `openspec/`: especificaciones y decisiones de cambios.
-- `bench/README.md`: metodología y escenarios de benchmark.
-- `docs/api/safe-routes-frontend-integration.md`: integración del endpoint de
-  rutas seguras.
+- [`bench/README.md`](bench/README.md): benchmark scenarios and result format.
+- [`bench/results/2026-06-23T18-47-40/comparison.md`](bench/results/2026-06-23T18-47-40/comparison.md): recorded comparison and findings.
+- [`openspec/`](openspec/): change proposals and current capability specs.
+- [`docs/api/safe-routes-frontend-integration.md`](docs/api/safe-routes-frontend-integration.md): frontend integration notes.
+- [`CLAUDE.md`](CLAUDE.md): repository conventions and deeper technical context.
